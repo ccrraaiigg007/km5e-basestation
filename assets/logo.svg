@@ -1,0 +1,62 @@
+<svg width="256" height="256" viewBox="0 0 680 680" xmlns="http://www.w3.org/2000/svg">
+  <style>
+    .ring-outer { fill: #3a6b2a; stroke: #2a5a1a; }
+    .ring-inner { stroke: #2a5a1a; }
+    .sky { fill: #87ceeb; }
+    .mountain-far { fill: #7a9e8a; }
+    .mountain-near { fill: #5a7e6a; }
+    .ground { fill: #4a8a3a; }
+    .tree-foliage { fill: #2d8a30; }
+    .tree-foliage-lt { fill: #3aaa45; }
+    .sun-body { fill: #f0c040; }
+    .antenna-pole { stroke: #555; }
+    .antenna-element { stroke: #666; }
+    .wave { stroke: #2a7a1a; }
+    .ph-text { fill: #f0f7ec; font-family: Arial, Helvetica, sans-serif; font-weight: 700; }
+    .tent-body { fill: #cc5533; }
+    .tent-shadow { fill: #aa3a18; }
+  </style>
+  <defs>
+    <clipPath id="sc">
+      <circle cx="340" cy="340" r="218"/>
+    </clipPath>
+  </defs>
+  <circle cx="340" cy="340" r="240" class="ring-outer" stroke-width="20"/>
+  <circle cx="340" cy="340" r="222" class="ring-inner" fill="none" stroke-width="1.5"/>
+  <rect x="100" y="100" width="480" height="480" class="sky" clip-path="url(#sc)"/>
+  <circle cx="430" cy="210" r="32" class="sun-body" clip-path="url(#sc)"/>
+  <g clip-path="url(#sc)">
+    <polygon points="140,390 250,250 360,390" class="mountain-far"/>
+    <polygon points="280,390 400,230 520,390" class="mountain-far"/>
+    <polygon points="420,390 510,270 600,390" class="mountain-far"/>
+    <polygon points="400,230 388,262 412,262" fill="#e0e0e0" opacity="0.6"/>
+  </g>
+  <g clip-path="url(#sc)">
+    <polygon points="120,440 230,330 340,440" class="mountain-near"/>
+    <polygon points="370,440 500,340 620,440" class="mountain-near"/>
+  </g>
+  <g clip-path="url(#sc)">
+    <rect x="100" y="420" width="480" height="160" class="ground"/>
+  </g>
+  <g clip-path="url(#sc)">
+    <polygon points="245,360 222,430 268,430" class="tree-foliage"/>
+    <polygon points="245,340 228,400 262,400" class="tree-foliage-lt"/>
+  </g>
+  <g clip-path="url(#sc)">
+    <polygon points="480,380 464,435 496,435" class="tree-foliage"/>
+    <polygon points="480,365 468,415 492,415" class="tree-foliage-lt"/>
+  </g>
+  <g clip-path="url(#sc)">
+    <polygon points="340,405 370,440 310,440" class="tent-body"/>
+    <polygon points="340,405 340,440 310,440" class="tent-shadow"/>
+  </g>
+  <g clip-path="url(#sc)">
+    <line x1="540" y1="300" x2="540" y2="420" class="antenna-pole" stroke-width="3" stroke-linecap="round"/>
+    <line x1="510" y1="310" x2="570" y2="310" class="antenna-element" stroke-width="2.5" stroke-linecap="round"/>
+  </g>
+  <g clip-path="url(#sc)">
+    <path d="M575 300 Q588 294 582 282" class="wave" fill="none" stroke-width="2.5" stroke-linecap="round" opacity="0.85"/>
+    <path d="M584 306 Q602 296 594 278" class="wave" fill="none" stroke-width="2" stroke-linecap="round" opacity="0.5"/>
+  </g>
+  <text x="340" y="365" text-anchor="middle" font-size="90" letter-spacing="6" class="ph-text">BC</text>
+</svg>
