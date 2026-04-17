@@ -1,4 +1,4 @@
-// KM5E's Base Camp v1.11.4
+// KM5E's Base Camp v1.12
 // POTA, SOTA & DX Spot Browser with N3FJP AC Log integration
 // Displays POTA, SOTA and DX cluster spots with radio tuning via N3FJP API
 
@@ -1291,10 +1291,24 @@ impl PotaHunterApp {
             egui::FontId::new(17.0, egui::FontFamily::Monospace),
         );
         style.spacing.item_spacing = egui::vec2(10.0, 7.0);
+        style.interaction.tooltip_delay = 0.5;
         cc.egui_ctx.set_style(style);
 
-        // Load emoji font (Segoe UI Emoji on Windows) as fallback
+        // Load Open Sans SemiBold as the primary UI font
         let mut fonts = egui::FontDefinitions::default();
+        let semibold_bytes = include_bytes!("../Open Sans font/static/OpenSans-SemiBold.ttf");
+        fonts.font_data.insert(
+            "opensans_semibold".to_string(),
+            std::sync::Arc::new(egui::FontData::from_static(semibold_bytes)),
+        );
+        if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+            family.insert(0, "opensans_semibold".to_string());
+        }
+        if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+            family.insert(0, "opensans_semibold".to_string());
+        }
+
+        // Load emoji font (Segoe UI Emoji on Windows) as fallback
         let emoji_paths = [
             "C:\\Windows\\Fonts\\seguiemj.ttf",  // Windows Segoe UI Emoji
             "C:\\Windows\\Fonts\\segoeui.ttf",    // Segoe UI (fallback)
@@ -1305,18 +1319,16 @@ impl PotaHunterApp {
                     "emoji".to_string(),
                     std::sync::Arc::new(egui::FontData::from_owned(font_data)),
                 );
-                // Add as fallback to Proportional (after the default font)
                 if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
                     family.push("emoji".to_string());
                 }
-                // Add as fallback to Monospace too
                 if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
                     family.push("emoji".to_string());
                 }
-                cc.egui_ctx.set_fonts(fonts);
                 break;
             }
         }
+        cc.egui_ctx.set_fonts(fonts);
 
         let mut app = Self::default();
 
@@ -1924,7 +1936,7 @@ impl PotaHunterApp {
 fn fetch_pota_spots() -> Result<Vec<PotaSpot>, String> {
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(15))
-        .user_agent("BaseCamp/1.11.4")
+        .user_agent("BaseCamp/1.12")
         .build()
         .map_err(|e| format!("HTTP client error: {}", e))?;
 
@@ -1948,7 +1960,7 @@ fn fetch_pota_spots() -> Result<Vec<PotaSpot>, String> {
 fn fetch_sota_spots() -> Result<Vec<SotaSpot>, String> {
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(15))
-        .user_agent("BaseCamp/1.11.4")
+        .user_agent("BaseCamp/1.12")
         .build()
         .map_err(|e| format!("HTTP client error: {}", e))?;
 
@@ -2085,7 +2097,7 @@ impl eframe::App for PotaHunterApp {
                     let size = egui::vec2(28.0, 28.0);
                     ui.image((tex.id(), size));
                 }
-                ui.heading("KM5E's Base Camp v1.11.4");
+                ui.heading("KM5E's Base Camp v1.12");
                 ui.separator();
 
                 let (is_fetching, last_fetch) = {
@@ -3008,8 +3020,7 @@ impl eframe::App for PotaHunterApp {
                                 ui.add_sized(
                                     [180.0, row_h],
                                     egui::Label::new(park_text).truncate(),
-                                )
-                                .on_hover_text(park);
+                                );
 
                                 // Location (with QRT indicator)
                                 let loc = entry
@@ -3029,7 +3040,11 @@ impl eframe::App for PotaHunterApp {
                                 } else {
                                     egui::RichText::new(&loc_display)
                                 };
-                                ui.label(loc_text);
+                                let row_h = ui.text_style_height(&egui::TextStyle::Body);
+                                ui.add_sized(
+                                    [180.0, row_h],
+                                    egui::Label::new(loc_text).truncate(),
+                                );
 
                                 // Comment (truncated)
                                 let comment = entry
@@ -3510,7 +3525,7 @@ fn main() -> eframe::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1400.0, 800.0])
         .with_min_inner_size([900.0, 500.0])
-        .with_title("KM5E's Base Camp v1.11.4 — POTA, SOTA & DX Spot Browser");
+        .with_title("KM5E's Base Camp v1.12 — POTA, SOTA & DX Spot Browser");
 
     if let Some(icon) = load_icon() {
         viewport = viewport.with_icon(std::sync::Arc::new(icon));
