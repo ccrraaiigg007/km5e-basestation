@@ -1,4 +1,4 @@
-// KM5E's Base Camp v1.12
+// KM5E's Base Camp v1.13
 // POTA, SOTA & DX Spot Browser with N3FJP AC Log integration
 // Displays POTA, SOTA and DX cluster spots with radio tuning via N3FJP API
 
@@ -138,6 +138,67 @@ impl SotaSpot {
 }
 
 // ---------------------------------------------------------------------------
+// WWFF API data model
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize)]
+struct WwffSpot {
+    #[serde(default)]
+    id: Option<u64>,
+    #[serde(default)]
+    activator: String,
+    /// Already in kHz (float) — e.g. 7059.5
+    #[serde(default)]
+    frequency_khz: f64,
+    #[serde(default)]
+    mode: String,
+    #[serde(default)]
+    reference: String,
+    #[serde(default)]
+    reference_name: String,
+    #[serde(default)]
+    remarks: String,
+    #[serde(default)]
+    spotter: String,
+    #[serde(default)]
+    spot_time_formatted: Option<String>,
+}
+
+impl WwffSpot {
+    fn to_pota_spot(&self) -> PotaSpot {
+        // frequency_khz is already kHz — format to one decimal to match PotaSpot convention
+        let frequency = format!("{:.1}", self.frequency_khz);
+
+        // Normalise timestamp: WWFF uses "2026-05-01 00:46:50" (space separator);
+        // spot_age_minutes() expects ISO 8601 with a T separator.
+        let spot_time = self.spot_time_formatted.as_ref().map(|s| s.replacen(' ', "T", 1));
+
+        // Extract programme prefix for location_desc (e.g. "VKFF-1925" -> "VKFF")
+        let loc = self.reference
+            .find('-')
+            .map(|i| self.reference[..i].to_string())
+            .unwrap_or_else(|| self.reference.clone());
+
+        PotaSpot {
+            spot_id: self.id,
+            activator: self.activator.clone(),
+            frequency,
+            mode: self.mode.clone(),
+            reference: self.reference.clone(),
+            park_name: Some(self.reference_name.clone()),
+            spot_time,
+            spotter: if self.spotter.is_empty() { None } else { Some(self.spotter.clone()) },
+            comments: if self.remarks.is_empty() { None } else { Some(self.remarks.clone()) },
+            source: Some("WWFF".to_string()),
+            name: Some(self.reference_name.clone()),
+            location_desc: Some(loc),
+            grid4: None,
+            grid6: None,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Spot type
 // ---------------------------------------------------------------------------
 
@@ -146,6 +207,7 @@ enum SpotType {
     Pota,
     Sota,
     Dx,
+    Wwff,
 }
 
 impl SpotType {
@@ -154,6 +216,7 @@ impl SpotType {
             SpotType::Pota => "POTA",
             SpotType::Sota => "SOTA",
             SpotType::Dx => "DX",
+            SpotType::Wwff => "WWFF",
         }
     }
 }
@@ -999,8 +1062,9 @@ fn dx_cluster_thread(
                             };
                             let mut st = dx_state.lock().unwrap();
                             st.cached_spots.push(cached);
-                            let cutoff = Instant::now() - Duration::from_secs(15 * 60);
-                            st.cached_spots.retain(|s| s.received_at > cutoff);
+                            if let Some(cutoff) = Instant::now().checked_sub(Duration::from_secs(15 * 60)) {
+                                st.cached_spots.retain(|s| s.received_at > cutoff);
+                            }
                         }
                     }
 
@@ -1069,7 +1133,7 @@ impl SpotEntry {
 /// Standalone key function usable before SpotEntry is constructed
 fn make_spot_key(spot_type: SpotType, activator: &str, reference: &str) -> String {
     match spot_type {
-        SpotType::Pota | SpotType::Sota => format!("{}-{}", activator, reference),
+        SpotType::Pota | SpotType::Sota | SpotType::Wwff => format!("{}-{}", activator, reference),
         SpotType::Dx => format!("DX-{}", activator),
     }
 }
@@ -1158,6 +1222,7 @@ struct PotaHunterApp {
     show_filters: bool,
     search_focus_requested: bool,
     selected_spot_key: Option<String>,
+    selected_row_idx: Option<usize>, // exact row in filtered list — unique even for duplicate keys
     scroll_to_selected: bool,
     // Filtered spot keys in display order (for keyboard navigation)
     filtered_keys: Vec<String>,
@@ -1243,6 +1308,7 @@ impl Default for PotaHunterApp {
             show_filters: true,
             search_focus_requested: false,
             selected_spot_key: None,
+            selected_row_idx: None,
             scroll_to_selected: false,
             filtered_keys: Vec::new(),
             ctx_menu_row: None,
@@ -1328,6 +1394,30 @@ impl PotaHunterApp {
                 break;
             }
         }
+        // Load a CJK font (Microsoft YaHei) as fallback for Chinese/Japanese/Korean
+        // characters. Open Sans and the emoji font have no CJK glyphs, so without
+        // this park names like "南京" render as squares.
+        let cjk_paths = [
+            "C:\\Windows\\Fonts\\msyh.ttc",   // Microsoft YaHei (Simplified Chinese)
+            "C:\\Windows\\Fonts\\msyhbd.ttc",  // Microsoft YaHei Bold
+            "C:\\Windows\\Fonts\\simsun.ttc",  // SimSun (older Windows fallback)
+        ];
+        for path in &cjk_paths {
+            if let Ok(font_data) = std::fs::read(path) {
+                fonts.font_data.insert(
+                    "cjk".to_string(),
+                    std::sync::Arc::new(egui::FontData::from_owned(font_data)),
+                );
+                if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+                    family.push("cjk".to_string());
+                }
+                if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+                    family.push("cjk".to_string());
+                }
+                break;
+            }
+        }
+
         cc.egui_ctx.set_fonts(fonts);
 
         let mut app = Self::default();
@@ -1401,12 +1491,14 @@ impl PotaHunterApp {
         std::thread::spawn(move || {
             let pota_result = fetch_pota_spots();
             let sota_result = fetch_sota_spots();
+            let wwff_result = fetch_wwff_spots();
 
             // Grab DX cached spots (already pruned to 15 min by the DX thread)
             let dx_spots: Vec<PotaSpot> = {
                 let mut st = dx_state.lock().unwrap();
-                let cutoff = Instant::now() - Duration::from_secs(15 * 60);
-                st.cached_spots.retain(|s| s.received_at > cutoff);
+                if let Some(cutoff) = Instant::now().checked_sub(Duration::from_secs(15 * 60)) {
+                    st.cached_spots.retain(|s| s.received_at > cutoff);
+                }
                 st.cached_spots.iter().map(|s| s.spot.clone()).collect()
             };
 
@@ -1487,6 +1579,46 @@ impl PotaHunterApp {
                         s.fetch_error = Some(format!("{} | SOTA: {}", existing, e));
                     } else {
                         s.fetch_error = Some(format!("SOTA: {}", e));
+                    }
+                }
+            }
+
+            // Process WWFF spots
+            match wwff_result {
+                Ok(spots) => {
+                    for wwff_spot in spots {
+                        let spot = wwff_spot.to_pota_spot();
+                        let band = freq_to_band(&spot.frequency);
+                        let country = location_to_country(
+                            spot.location_desc.as_deref().unwrap_or(""),
+                        );
+                        let key = make_spot_key(SpotType::Wwff, &spot.activator, &spot.reference);
+                        let hunted_flag = hunted.contains(&key);
+                        let not_heard_flag = not_heard.contains(&key);
+                        let is_qrt = spot
+                            .comments
+                            .as_deref()
+                            .unwrap_or("")
+                            .to_uppercase()
+                            .contains("QRT");
+                        all_entries.push(SpotEntry {
+                            spot,
+                            spot_type: SpotType::Wwff,
+                            band,
+                            country,
+                            hunted: hunted_flag,
+                            is_qrt,
+                            not_heard: not_heard_flag,
+                            dxcc_country: None,
+                            atno_status: None,
+                        });
+                    }
+                }
+                Err(ref e) => {
+                    if let Some(ref existing) = s.fetch_error {
+                        s.fetch_error = Some(format!("{} | WWFF: {}", existing, e));
+                    } else {
+                        s.fetch_error = Some(format!("WWFF: {}", e));
                     }
                 }
             }
@@ -1654,11 +1786,17 @@ impl PotaHunterApp {
                     ta.cmp(tb)
                 }
             };
-            if asc {
-                ordering
-            } else {
-                ordering.reverse()
-            }
+            let ordering = if asc { ordering } else { ordering.reverse() };
+            // Tie-break: newest spot_time first, then activator A→Z.
+            // This makes the visible order deterministic even when the
+            // underlying state.spots Vec is reshuffled by a data refresh.
+            ordering
+                .then_with(|| {
+                    let ta = a.spot.spot_time.as_deref().unwrap_or("");
+                    let tb = b.spot.spot_time.as_deref().unwrap_or("");
+                    tb.cmp(ta) // descending — newer spots first on ties
+                })
+                .then_with(|| a.spot.activator.cmp(&b.spot.activator))
         });
 
         // Duplicate collapsing: keep only the newest spot per callsign
@@ -1799,8 +1937,9 @@ impl PotaHunterApp {
     /// Get current DX spots from cache (pruned to 15 minutes)
     fn get_dx_cache_spots(&self) -> Vec<PotaSpot> {
         let mut st = self.dx_state.lock().unwrap();
-        let cutoff = Instant::now() - Duration::from_secs(15 * 60);
-        st.cached_spots.retain(|s| s.received_at > cutoff);
+        if let Some(cutoff) = Instant::now().checked_sub(Duration::from_secs(15 * 60)) {
+            st.cached_spots.retain(|s| s.received_at > cutoff);
+        }
         st.cached_spots.iter().map(|s| s.spot.clone()).collect()
     }
 
@@ -1936,7 +2075,7 @@ impl PotaHunterApp {
 fn fetch_pota_spots() -> Result<Vec<PotaSpot>, String> {
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(15))
-        .user_agent("BaseCamp/1.12")
+        .user_agent("BaseCamp/1.13")
         .build()
         .map_err(|e| format!("HTTP client error: {}", e))?;
 
@@ -1960,7 +2099,7 @@ fn fetch_pota_spots() -> Result<Vec<PotaSpot>, String> {
 fn fetch_sota_spots() -> Result<Vec<SotaSpot>, String> {
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(15))
-        .user_agent("BaseCamp/1.12")
+        .user_agent("BaseCamp/1.13")
         .build()
         .map_err(|e| format!("HTTP client error: {}", e))?;
 
@@ -1977,6 +2116,29 @@ fn fetch_sota_spots() -> Result<Vec<SotaSpot>, String> {
     let spots: Vec<SotaSpot> = response
         .json()
         .map_err(|e| format!("SOTA JSON parse error: {}", e))?;
+
+    Ok(spots)
+}
+
+fn fetch_wwff_spots() -> Result<Vec<WwffSpot>, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .user_agent("BaseCamp/1.13")
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+
+    let response = client
+        .get("https://spots.wwff.co/static/spots.json")
+        .send()
+        .map_err(|e| format!("WWFF request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("WWFF HTTP {}", response.status()));
+    }
+
+    let spots: Vec<WwffSpot> = response
+        .json()
+        .map_err(|e| format!("WWFF JSON parse error: {}", e))?;
 
     Ok(spots)
 }
@@ -2045,33 +2207,70 @@ impl eframe::App for PotaHunterApp {
                 i.key_pressed(egui::Key::Escape),
             )
         });
+        // Consume arrow keys so egui's ScrollArea doesn't also scroll in response.
+        let typing = ctx.memory(|m| m.focused().is_some());
+        if (key_down || key_up) && !typing {
+            ctx.input_mut(|i| {
+                i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown);
+                i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp);
+            });
+        }
+        // Rebuild filtered_keys so they reflect the current display order.
+        self.filtered_keys = self.get_filtered_spots()
+            .iter()
+            .map(|(_, e)| e.spot_key())
+            .collect();
+
+        // Re-anchor selected_row_idx if the spot at that row has changed (e.g. after
+        // a data refresh). If the key still matches, leave the index alone so that
+        // navigating among duplicate-key rows (multiple DX spots for the same callsign)
+        // keeps the correct row highlighted.
+        {
+            let still_valid = self.selected_row_idx
+                .and_then(|i| self.filtered_keys.get(i))
+                .map_or(false, |k| Some(k.as_str()) == self.selected_spot_key.as_deref());
+            if !still_valid {
+                // The previously selected row is gone or out of bounds — find the
+                // first row that still carries the same logical spot key.
+                self.selected_row_idx = self.selected_spot_key.as_ref()
+                    .and_then(|k| self.filtered_keys.iter().position(|fk| fk == k));
+            }
+        }
+
         let filtered_count = self.filtered_keys.len();
         if key_down {
-            let cur_pos = self.selected_spot_key.as_ref().and_then(|k| {
-                self.filtered_keys.iter().position(|fk| fk == k)
-            }).unwrap_or(0);
-            if cur_pos + 1 < filtered_count {
-                self.selected_spot_key = Some(self.filtered_keys[cur_pos + 1].clone());
-                self.scroll_to_selected = true;
-            } else if !self.filtered_keys.is_empty() && self.selected_spot_key.is_none() {
-                self.selected_spot_key = Some(self.filtered_keys[0].clone());
-                self.scroll_to_selected = true;
+            match self.selected_row_idx {
+                // Nothing selected yet — jump to the first visible row.
+                None if !self.filtered_keys.is_empty() => {
+                    self.selected_row_idx = Some(0);
+                    self.selected_spot_key = self.filtered_keys.first().cloned();
+                    self.scroll_to_selected = true;
+                }
+                // Move one row down by index — works correctly even when adjacent
+                // rows share the same spot_key (e.g. duplicate DX callsigns).
+                Some(idx) if idx + 1 < filtered_count => {
+                    let new_idx = idx + 1;
+                    self.selected_row_idx = Some(new_idx);
+                    self.selected_spot_key = Some(self.filtered_keys[new_idx].clone());
+                    self.scroll_to_selected = true;
+                }
+                _ => {}
             }
         }
         if key_up {
-            let cur_pos = self.selected_spot_key.as_ref().and_then(|k| {
-                self.filtered_keys.iter().position(|fk| fk == k)
-            }).unwrap_or(0);
-            if cur_pos > 0 {
-                self.selected_spot_key = Some(self.filtered_keys[cur_pos - 1].clone());
-                self.scroll_to_selected = true;
+            if let Some(idx) = self.selected_row_idx {
+                if idx > 0 {
+                    let new_idx = idx - 1;
+                    self.selected_row_idx = Some(new_idx);
+                    self.selected_spot_key = Some(self.filtered_keys[new_idx].clone());
+                    self.scroll_to_selected = true;
+                }
             }
         }
         if key_r {
             self.trigger_fetch();
         }
         // `/` — focus the search box (ignored if already typing somewhere)
-        let typing = ctx.memory(|m| m.focused().is_some());
         if key_slash && !typing {
             self.search_focus_requested = true;
             // show the sidebar if hidden so the focus target exists
@@ -2097,7 +2296,7 @@ impl eframe::App for PotaHunterApp {
                     let size = egui::vec2(28.0, 28.0);
                     ui.image((tex.id(), size));
                 }
-                ui.heading("KM5E's Base Camp v1.12");
+                ui.heading("KM5E's Base Camp v1.13");
                 ui.separator();
 
                 let (is_fetching, last_fetch) = {
@@ -2620,7 +2819,7 @@ impl eframe::App for PotaHunterApp {
                     {
                         self.filter_types.clear();
                     }
-                    for spot_type in &[SpotType::Pota, SpotType::Sota, SpotType::Dx] {
+                    for spot_type in &[SpotType::Pota, SpotType::Sota, SpotType::Dx, SpotType::Wwff] {
                         let is_selected = self.filter_types.contains(spot_type);
                         if ui.selectable_label(is_selected, spot_type.label()).clicked() {
                             if is_selected {
@@ -2652,10 +2851,10 @@ impl eframe::App for PotaHunterApp {
             // Build filtered keys list for keyboard navigation
             self.filtered_keys = filtered.iter().map(|(_, e)| e.spot_key()).collect();
 
-            // Process keyboard shortcuts on selected spot (by key)
-            if let Some(ref sel_key) = self.selected_spot_key.clone() {
-                if let Some(pos) = filtered.iter().position(|(_, e)| e.spot_key() == *sel_key) {
-                    let (original_idx, ref entry) = filtered[pos];
+            // Process keyboard shortcuts on the selected spot (by exact row index so
+            // duplicate-key rows like multiple DX spots per callsign work correctly).
+            if let Some(row_idx) = self.selected_row_idx {
+                if let Some((original_idx, entry)) = filtered.get(row_idx).cloned() {
 
                     if key_enter {
                         let port: u16 = self.n3fjp_port.parse().unwrap_or(1100);
@@ -2858,24 +3057,19 @@ impl eframe::App for PotaHunterApp {
                                     .map_or(false, |k| k == &spot_key);
                                 let is_greyed = entry.is_qrt;  // only QRT is greyed
                                 let is_not_heard = entry.not_heard && !entry.is_qrt;
-                                let is_selected = self.selected_spot_key
-                                    .as_ref()
-                                    .map_or(false, |k| k == &spot_key);
+                                let is_selected = self.selected_row_idx == Some(row_idx);
                                 let is_atno = entry.atno_status.as_deref()
                                     .map_or(false, |s| s == "ATNO" || s == "OW" || s == "OC");
 
-                                // Text color
-                                let text_color = if is_greyed {
-                                    egui::Color32::from_rgb(41, 38, 35)
-                                } else if is_not_heard {
+                                // Text color — only not-heard gets a custom colour now;
+                                // QRT spots are no longer faded (only the callsign is struck through).
+                                let text_color = if is_not_heard {
                                     egui::Color32::from_rgb(80, 110, 180)
                                 } else {
                                     egui::Color32::GRAY // unused fallback
                                 };
 
-                                let band_color = if is_greyed {
-                                    egui::Color32::from_rgb(41, 38, 35)
-                                } else if is_not_heard {
+                                let band_color = if is_not_heard {
                                     egui::Color32::from_rgb(80, 110, 180)
                                 } else {
                                     match entry.band.as_str() {
@@ -2898,8 +3092,8 @@ impl eframe::App for PotaHunterApp {
                                 // Row background tint
                                 let row_color = if is_last_tuned {
                                     Some(egui::Color32::from_rgba_premultiplied(200, 170, 0, 90))
-                                } else if is_atno && !is_greyed && !is_not_heard {
-                                    // Soft red highlight for new entities
+                                } else if is_atno && !is_not_heard {
+                                    // Soft red highlight for new entities (including QRT ATNOs)
                                     Some(egui::Color32::from_rgba_premultiplied(220, 60, 60, 50))
                                 } else if is_selected {
                                     Some(egui::Color32::from_rgba_premultiplied(80, 120, 200, 60))
@@ -2907,8 +3101,6 @@ impl eframe::App for PotaHunterApp {
                                     Some(egui::Color32::from_rgba_premultiplied(0, 100, 0, 40))
                                 } else if is_not_heard {
                                     Some(egui::Color32::from_rgba_premultiplied(60, 100, 200, 35))
-                                } else if is_greyed {
-                                    Some(egui::Color32::from_rgba_premultiplied(128, 120, 110, 35))
                                 } else {
                                     None
                                 };
@@ -2920,7 +3112,8 @@ impl eframe::App for PotaHunterApp {
                                 let type_color = match entry.spot_type {
                                     SpotType::Pota => egui::Color32::from_rgb(60, 160, 60),
                                     SpotType::Sota => egui::Color32::from_rgb(180, 120, 40),
-                                    SpotType::Dx => egui::Color32::from_rgb(100, 140, 220),
+                                    SpotType::Dx   => egui::Color32::from_rgb(100, 140, 220),
+                                    SpotType::Wwff => egui::Color32::from_rgb(40, 170, 170),
                                 };
                                 ui.label(
                                     egui::RichText::new(entry.spot_type.label())
@@ -2934,7 +3127,7 @@ impl eframe::App for PotaHunterApp {
                                 ui.label(band_text);
 
                                 // Mode
-                                let mode_text = if is_greyed || is_not_heard {
+                                let mode_text = if is_not_heard {
                                     egui::RichText::new(&entry.spot.mode).color(text_color)
                                 } else {
                                     egui::RichText::new(&entry.spot.mode)
@@ -2942,7 +3135,7 @@ impl eframe::App for PotaHunterApp {
                                 ui.label(mode_text);
 
                                 // Frequency (monospace, right-aligned)
-                                let freq_text = if is_greyed || is_not_heard {
+                                let freq_text = if is_not_heard {
                                     egui::RichText::new(&entry.spot.frequency)
                                         .monospace()
                                         .color(text_color)
@@ -2960,28 +3153,27 @@ impl eframe::App for PotaHunterApp {
                                 });
 
                                 // Activator (with ATNO badge)
-                                let call_display = if is_atno && !is_greyed && !is_not_heard {
+                                let call_display = if is_atno && !is_not_heard {
                                     format!("{} NEW!", entry.spot.activator)
                                 } else {
                                     entry.spot.activator.clone()
                                 };
-                                let call_text = if is_greyed {
-                                    egui::RichText::new(&call_display)
-                                        .color(text_color)
-                                        .strikethrough()
-                                } else if is_not_heard {
-                                    egui::RichText::new(&call_display)
-                                        .color(text_color)
+                                // Build the base style (colour / weight) then apply
+                                // strikethrough for QRT or hunted as a second step.
+                                let call_text = if is_not_heard {
+                                    egui::RichText::new(&call_display).color(text_color)
                                 } else if is_atno {
                                     egui::RichText::new(&call_display)
                                         .strong()
                                         .color(egui::Color32::from_rgb(220, 50, 50))
-                                } else if entry.hunted {
-                                    egui::RichText::new(&call_display)
-                                        .strikethrough()
                                 } else {
-                                    egui::RichText::new(&call_display)
-                                        .strong()
+                                    egui::RichText::new(&call_display).strong()
+                                };
+                                // QRT keeps strikethrough; hunted also gets strikethrough.
+                                let call_text = if is_greyed || entry.hunted {
+                                    call_text.strikethrough()
+                                } else {
+                                    call_text
                                 };
                                 // Build tooltip with DXCC info
                                 let dxcc_tip = {
@@ -3002,7 +3194,7 @@ impl eframe::App for PotaHunterApp {
                                 ui.label(call_text).on_hover_text(dxcc_tip);
 
                                 // Reference
-                                let ref_text = if is_greyed || is_not_heard {
+                                let ref_text = if is_not_heard {
                                     egui::RichText::new(&entry.spot.reference).color(text_color)
                                 } else {
                                     egui::RichText::new(&entry.spot.reference)
@@ -3011,7 +3203,7 @@ impl eframe::App for PotaHunterApp {
 
                                 // Park name (truncated)
                                 let park = entry.spot.display_park_name();
-                                let park_text = if is_greyed || is_not_heard {
+                                let park_text = if is_not_heard {
                                     egui::RichText::new(park).color(text_color)
                                 } else {
                                     egui::RichText::new(park)
@@ -3035,7 +3227,7 @@ impl eframe::App for PotaHunterApp {
                                 } else {
                                     loc.to_string()
                                 };
-                                let loc_text = if is_greyed || is_not_heard {
+                                let loc_text = if is_not_heard {
                                     egui::RichText::new(&loc_display).color(text_color)
                                 } else {
                                     egui::RichText::new(&loc_display)
@@ -3058,7 +3250,7 @@ impl eframe::App for PotaHunterApp {
                                 } else {
                                     comment.to_string()
                                 };
-                                let comment_text = if is_greyed || is_not_heard {
+                                let comment_text = if is_not_heard {
                                     egui::RichText::new(&comment_display).color(text_color)
                                 } else {
                                     egui::RichText::new(&comment_display)
@@ -3080,7 +3272,7 @@ impl eframe::App for PotaHunterApp {
                                 } else {
                                     "-".to_string()
                                 };
-                                let dist_text = if is_greyed || is_not_heard {
+                                let dist_text = if is_not_heard {
                                     egui::RichText::new(&dist_display).color(text_color)
                                 } else {
                                     egui::RichText::new(&dist_display)
@@ -3095,7 +3287,7 @@ impl eframe::App for PotaHunterApp {
                                     .unwrap_or("");
                                 let age_str = spot_age_str(time);
                                 let age_mins = spot_age_minutes(time);
-                                let age_color = if is_greyed || is_not_heard {
+                                let age_color = if is_not_heard {
                                     text_color
                                 } else if age_mins > 30 {
                                     egui::Color32::from_rgb(180, 80, 80)
@@ -3286,6 +3478,7 @@ impl eframe::App for PotaHunterApp {
                                 if let Some(pos) = hover_pos {
                                     if row_rect.contains(pos) {
                                         if primary_clicked {
+                                            self.selected_row_idx = Some(row_idx);
                                             self.selected_spot_key = Some(spot_key.clone());
                                         }
                                         if primary_doubled {
@@ -3306,6 +3499,7 @@ impl eframe::App for PotaHunterApp {
                                             }
                                         }
                                         if secondary_clicked {
+                                            self.selected_row_idx = Some(row_idx);
                                             self.selected_spot_key = Some(spot_key.clone());
                                             self.ctx_menu_row = Some(row_idx);
                                             self.ctx_menu_original_idx = Some(*original_idx);
@@ -3317,9 +3511,17 @@ impl eframe::App for PotaHunterApp {
                                     }
                                 }
 
-                                // Auto-scroll on keyboard nav
+                                // Auto-scroll on keyboard nav — vertical only.
+                                // Use the clip rect's X range so scroll_to_rect
+                                // considers the row already horizontally in view
+                                // and doesn't adjust the horizontal scroll position.
                                 if is_selected && self.scroll_to_selected {
-                                    ui.scroll_to_rect(row_rect, Some(egui::Align::Center));
+                                    let clip = ui.clip_rect();
+                                    let v_only = egui::Rect::from_x_y_ranges(
+                                        clip.x_range(),
+                                        row_rect.y_range(),
+                                    );
+                                    ui.scroll_to_rect(v_only, Some(egui::Align::Center));
                                     self.scroll_to_selected = false;
                                 }
 
@@ -3466,6 +3668,18 @@ impl eframe::App for PotaHunterApp {
                                     }
                                 }
                             }
+                            if let Some(SpotType::Wwff) = self.ctx_menu_spot_type {
+                                if !spot.reference.is_empty() {
+                                    if ui.button("Open on WWFF Spotline").clicked() {
+                                        let url = format!(
+                                            "https://spots.wwff.co/references/direct?wwff={}",
+                                            spot.reference
+                                        );
+                                        let _ = open::that(&url);
+                                        close_menu = true;
+                                    }
+                                }
+                            }
 
                             ui.separator();
 
@@ -3525,7 +3739,7 @@ fn main() -> eframe::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1400.0, 800.0])
         .with_min_inner_size([900.0, 500.0])
-        .with_title("KM5E's Base Camp v1.12 — POTA, SOTA & DX Spot Browser");
+        .with_title("KM5E's Base Camp v1.13 — POTA, SOTA & DX Spot Browser");
 
     if let Some(icon) = load_icon() {
         viewport = viewport.with_icon(std::sync::Arc::new(icon));
