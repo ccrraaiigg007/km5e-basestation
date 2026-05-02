@@ -1,6 +1,6 @@
 [package]
 name = "basecamp"
-version = "1.16.0"
+version = "1.17.0"
 edition = "2021"
 description = "KM5E's Base Camp — POTA, SOTA & DX Spot Browser with N3FJP AC Log integration"
 authors = ["Craig KM5E"]
@@ -20,6 +20,11 @@ chrono = { version = "0.4", features = ["serde"] }
 tokio = { version = "1", features = ["full"] }
 dirs = "5"
 open = "5"
+
+[build-dependencies]
+winres = "0.1"
+image = "0.25"
+ico = "0.3"
 
 [profile.release]
 opt-level = 2
