@@ -2243,7 +2243,7 @@ impl eframe::App for PotaHunterApp {
         ctx.request_repaint_after(Duration::from_secs(1));
 
         // Keyboard shortcuts — capture key states first
-        let (key_down, key_up, key_r, key_enter, key_h, key_l, key_slash, key_esc) = ctx.input(|i| {
+        let (key_down, key_up, key_r, key_enter, key_h, key_l, key_n, key_slash, key_esc) = ctx.input(|i| {
             (
                 i.key_pressed(egui::Key::ArrowDown),
                 i.key_pressed(egui::Key::ArrowUp),
@@ -2251,6 +2251,7 @@ impl eframe::App for PotaHunterApp {
                 i.key_pressed(egui::Key::Enter),
                 i.key_pressed(egui::Key::H) && !i.modifiers.any(),
                 i.key_pressed(egui::Key::L) && !i.modifiers.any(),
+                i.key_pressed(egui::Key::N) && !i.modifiers.any(),
                 i.key_pressed(egui::Key::Slash),
                 i.key_pressed(egui::Key::Escape),
             )
@@ -2929,6 +2930,67 @@ impl eframe::App for PotaHunterApp {
                             }
                         }
                     }
+
+                    if key_n {
+                        // Toggle not-heard on the selected spot
+                        let spot_key = entry.spot_key();
+                        let new_state = !self.not_heard_set.contains(&spot_key);
+                        if new_state {
+                            self.not_heard_set.insert(spot_key.clone());
+                        } else {
+                            self.not_heard_set.remove(&spot_key);
+                        }
+                        {
+                            let mut state = self.state.lock().unwrap();
+                            if let Some(e) = state.spots.get_mut(original_idx) {
+                                e.not_heard = new_state;
+                            }
+                        }
+
+                        // Only advance when marking NH (not un-marking)
+                        if new_state {
+                            // Find next workable spot with wrap-around, skipping the
+                            // just-marked row.  Search forward first, then from the top.
+                            let next_i = (row_idx + 1..filtered.len())
+                                .chain(0..row_idx)
+                                .find(|&i| {
+                                    let (_, ref e) = filtered[i];
+                                    !e.hunted && !e.not_heard && !e.is_qrt
+                                });
+
+                            if let Some(next_i) = next_i {
+                                // Clone what we need before mutably borrowing self
+                                let next_key  = filtered[next_i].1.spot_key();
+                                let next_spot = filtered[next_i].1.spot.clone();
+
+                                self.selected_row_idx  = Some(next_i);
+                                self.selected_spot_key = Some(next_key.clone());
+                                self.scroll_to_selected = true;
+
+                                // Auto-tune to the next spot
+                                let port: u16 = self.n3fjp_port.parse().unwrap_or(1100);
+                                let client = N3fjpClient::new(&self.n3fjp_host, port);
+                                match client.tune_to_spot(&next_spot) {
+                                    Ok(_) => {
+                                        self.n3fjp_status = format!(
+                                            "NH → tuned to {} on {} kHz",
+                                            next_spot.activator, next_spot.frequency
+                                        );
+                                        self.last_tuned_key = Some(next_key);
+                                    }
+                                    Err(_) => {
+                                        self.n3fjp_status = format!(
+                                            "NH → {} (N3FJP not connected)",
+                                            next_spot.activator
+                                        );
+                                    }
+                                }
+                            } else {
+                                self.n3fjp_status =
+                                    "NH marked — no more workable spots".to_string();
+                            }
+                        }
+                    }
                 }
             }
 
@@ -2999,7 +3061,7 @@ impl eframe::App for PotaHunterApp {
             }
 
             ui.label(format!(
-                "Showing {} spots  (Up/Down navigate, Enter = tune, H = hunt, L = log, R = refresh, / = search)",
+                "Showing {} spots  (Up/Down navigate, Enter = tune, H = hunt, N = NH+skip, L = log, R = refresh, / = search)",
                 filtered.len()
             ));
             ui.separator();
