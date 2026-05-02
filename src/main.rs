@@ -1157,6 +1157,8 @@ struct PotaHunterApp {
     n3fjp_host: String,
     n3fjp_port: String,
     n3fjp_status: String,
+    n3fjp_status_snapshot: String,        // previous value for change detection
+    n3fjp_status_changed_at: Option<Instant>, // when status last changed (for timeout)
 
     // N3FJP event listener (auto-hunt on log)
     n3fjp_listener_running: Arc<AtomicBool>,
@@ -1218,6 +1220,7 @@ struct PotaHunterApp {
     sort_ascending: bool,
 
     // UI state
+    first_frame: bool,  // re-apply saved theme on frame 1 to override system theme
     show_settings: bool,
     show_filters: bool,
     search_focus_requested: bool,
@@ -1264,6 +1267,8 @@ impl Default for PotaHunterApp {
             n3fjp_host: s.n3fjp_host,
             n3fjp_port: s.n3fjp_port,
             n3fjp_status: String::new(),
+            n3fjp_status_snapshot: String::new(),
+            n3fjp_status_changed_at: None,
             n3fjp_listener_running: Arc::new(AtomicBool::new(false)),
             n3fjp_listener_connected: Arc::new(Mutex::new(false)),
             n3fjp_logged_calls: Arc::new(Mutex::new(Vec::new())),
@@ -1304,6 +1309,7 @@ impl Default for PotaHunterApp {
             dark_mode: s.dark_mode,
             sort_column: SortColumn::SpotTime,
             sort_ascending: false,
+            first_frame: true,
             show_settings: false,
             show_filters: true,
             search_focus_requested: false,
@@ -1338,25 +1344,25 @@ impl PotaHunterApp {
         let mut style = (*cc.egui_ctx.style()).clone();
         style.text_styles.insert(
             egui::TextStyle::Body,
-            egui::FontId::new(18.0, egui::FontFamily::Proportional),
+            egui::FontId::new(16.0, egui::FontFamily::Proportional),
         );
         style.text_styles.insert(
             egui::TextStyle::Button,
-            egui::FontId::new(18.0, egui::FontFamily::Proportional),
+            egui::FontId::new(16.0, egui::FontFamily::Proportional),
         );
         style.text_styles.insert(
             egui::TextStyle::Heading,
-            egui::FontId::new(26.0, egui::FontFamily::Proportional),
+            egui::FontId::new(22.0, egui::FontFamily::Proportional),
         );
         style.text_styles.insert(
             egui::TextStyle::Small,
-            egui::FontId::new(15.0, egui::FontFamily::Proportional),
+            egui::FontId::new(13.0, egui::FontFamily::Proportional),
         );
         style.text_styles.insert(
             egui::TextStyle::Monospace,
-            egui::FontId::new(17.0, egui::FontFamily::Monospace),
+            egui::FontId::new(15.0, egui::FontFamily::Monospace),
         );
-        style.spacing.item_spacing = egui::vec2(10.0, 7.0);
+        style.spacing.item_spacing = egui::vec2(8.0, 5.0);
         style.interaction.tooltip_delay = 0.5;
         cc.egui_ctx.set_style(style);
 
@@ -1370,8 +1376,23 @@ impl PotaHunterApp {
         if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
             family.insert(0, "opensans_semibold".to_string());
         }
-        if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
-            family.insert(0, "opensans_semibold".to_string());
+
+        // Load Consolas as the primary monospace font (frequency readouts, age column)
+        let consolas_paths = [
+            "C:\\Windows\\Fonts\\consola.ttf",   // Consolas Regular
+            "C:\\Windows\\Fonts\\lucon.ttf",      // Lucida Console fallback
+        ];
+        for path in &consolas_paths {
+            if let Ok(font_data) = std::fs::read(path) {
+                fonts.font_data.insert(
+                    "consolas".to_string(),
+                    std::sync::Arc::new(egui::FontData::from_owned(font_data)),
+                );
+                if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+                    family.insert(0, "consolas".to_string());
+                }
+                break;
+            }
         }
 
         // Load emoji font (Segoe UI Emoji on Windows) as fallback
@@ -2149,6 +2170,33 @@ fn fetch_wwff_spots() -> Result<Vec<WwffSpot>, String> {
 
 impl eframe::App for PotaHunterApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Re-apply saved dark/light theme on the first frame.
+        // eframe 0.31 applies the system theme after new() returns, so set_visuals()
+        // in the constructor gets overridden.  Calling it here wins every time.
+        if self.first_frame {
+            ctx.set_visuals(if self.dark_mode {
+                egui::Visuals::dark()
+            } else {
+                egui::Visuals::light()
+            });
+            self.first_frame = false;
+        }
+
+        // Status message timeout — clear after 5 seconds without touching call sites
+        if self.n3fjp_status != self.n3fjp_status_snapshot {
+            self.n3fjp_status_snapshot = self.n3fjp_status.clone();
+            if !self.n3fjp_status.is_empty() {
+                self.n3fjp_status_changed_at = Some(Instant::now());
+            }
+        }
+        if let Some(t) = self.n3fjp_status_changed_at {
+            if !self.n3fjp_status.is_empty() && t.elapsed().as_secs() >= 5 {
+                self.n3fjp_status.clear();
+                self.n3fjp_status_snapshot.clear();
+                self.n3fjp_status_changed_at = None;
+            }
+        }
+
         // Auto-refresh logic
         if self.auto_refresh {
             let should_refresh = {
@@ -2293,31 +2341,36 @@ impl eframe::App for PotaHunterApp {
             ui.horizontal(|ui| {
                 // Logo
                 if let Some(ref tex) = self.logo_texture {
-                    let size = egui::vec2(28.0, 28.0);
+                    let size = egui::vec2(36.0, 36.0);
                     ui.image((tex.id(), size));
                 }
-                ui.heading("KM5E's Base Camp v1.13");
+                ui.label(
+                    egui::RichText::new("Base Camp")
+                        .strong()
+                        .size(18.0),
+                );
                 ui.separator();
 
                 let (is_fetching, last_fetch) = {
                     let state = self.state.lock().unwrap();
                     (state.is_fetching, state.last_fetch)
                 };
-                let btn_text = if is_fetching {
-                    "⏳ Refreshing...".to_string()
-                } else if self.auto_refresh && self.refresh_interval_secs > 0 {
-                    let elapsed = last_fetch.map(|t| t.elapsed().as_secs()).unwrap_or(0);
-                    let remaining = (self.refresh_interval_secs as u64).saturating_sub(elapsed);
-                    format!("🔄 Refresh ({}s)", remaining)
-                } else {
-                    "🔄 Refresh Spots".to_string()
-                };
+                let btn_text = if is_fetching { "⏳ Refreshing..." } else { "🔄 Refresh" };
                 if ui
                     .add_enabled(!is_fetching, egui::Button::new(btn_text))
                     .on_hover_text("Fetch spots now (R)")
                     .clicked()
                 {
                     self.trigger_fetch();
+                }
+                if !is_fetching && self.auto_refresh && self.refresh_interval_secs > 0 {
+                    let elapsed = last_fetch.map(|t| t.elapsed().as_secs()).unwrap_or(0);
+                    let remaining = (self.refresh_interval_secs as u64).saturating_sub(elapsed);
+                    ui.label(
+                        egui::RichText::new(format!("{}s", remaining))
+                            .small()
+                            .color(egui::Color32::GRAY),
+                    );
                 }
 
                 ui.separator();
@@ -2340,15 +2393,15 @@ impl eframe::App for PotaHunterApp {
                 {
                     let is_running = self.n3fjp_listener_running.load(Ordering::SeqCst);
                     let is_connected = *self.n3fjp_listener_connected.lock().unwrap();
-                    let (label, color) = if is_connected {
-                        ("N3FJP: ON", egui::Color32::from_rgb(80, 200, 80))
+                    let color = if is_connected {
+                        egui::Color32::from_rgb(80, 200, 80)
                     } else if is_running {
-                        ("N3FJP: ...", egui::Color32::from_rgb(200, 200, 80))
+                        egui::Color32::from_rgb(200, 200, 80)
                     } else {
-                        ("N3FJP: OFF", egui::Color32::GRAY)
+                        egui::Color32::GRAY
                     };
                     if ui
-                        .button(egui::RichText::new(label).color(color))
+                        .button(egui::RichText::new("N3FJP").color(color))
                         .on_hover_text("Toggle N3FJP AC Log listener")
                         .clicked()
                     {
@@ -2364,15 +2417,15 @@ impl eframe::App for PotaHunterApp {
                 {
                     let dx_running = self.dx_running.load(Ordering::SeqCst);
                     let dx_connected = self.dx_state.lock().unwrap().connected;
-                    let (label, color) = if dx_connected {
-                        ("DX: ON", egui::Color32::from_rgb(80, 200, 80))
+                    let color = if dx_connected {
+                        egui::Color32::from_rgb(80, 200, 80)
                     } else if dx_running {
-                        ("DX: ...", egui::Color32::from_rgb(200, 200, 80))
+                        egui::Color32::from_rgb(200, 200, 80)
                     } else {
-                        ("DX: OFF", egui::Color32::GRAY)
+                        egui::Color32::GRAY
                     };
                     if ui
-                        .button(egui::RichText::new(label).color(color))
+                        .button(egui::RichText::new("DX Cluster").color(color))
                         .on_hover_text("Toggle DX cluster connection")
                         .clicked()
                     {
@@ -2384,15 +2437,24 @@ impl eframe::App for PotaHunterApp {
                     }
                 }
 
-                // ATNO / New entity alert badge
+                // ATNO / New entity alert badge — pill button, click to dismiss
                 if self.atno_alert_count > 0 {
                     ui.separator();
-                    ui.label(
-                        egui::RichText::new(format!("NEW: {}", self.atno_alert_count))
-                            .strong()
-                            .color(egui::Color32::from_rgb(255, 60, 60)),
-                    )
-                    .on_hover_text("New DXCC entities or new band/mode combinations in current spots");
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new(format!("⚡ {} NEW", self.atno_alert_count))
+                                    .strong()
+                                    .color(egui::Color32::WHITE)
+                                    .size(13.0),
+                            )
+                            .fill(egui::Color32::from_rgb(200, 40, 40)),
+                        )
+                        .on_hover_text("New DXCC entities or new band/mode combinations — click to dismiss")
+                        .clicked()
+                    {
+                        self.atno_alert_count = 0;
+                    }
                 }
 
                 // Compact status on the right (no error text here)
@@ -2414,7 +2476,8 @@ impl eframe::App for PotaHunterApp {
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
-                    ui.heading("N3FJP AC Log Connection");
+                    ui.set_min_width(360.0);
+                    ui.label(egui::RichText::new("N3FJP AC Log Connection").strong().size(15.0));
                     ui.horizontal(|ui| {
                         ui.label("Host:");
                         ui.text_edit_singleline(&mut self.n3fjp_host);
@@ -2441,7 +2504,7 @@ impl eframe::App for PotaHunterApp {
                     }
 
                     ui.separator();
-                    ui.heading("Auto-Refresh");
+                    ui.label(egui::RichText::new("Auto-Refresh").strong().size(15.0));
                     ui.checkbox(&mut self.auto_refresh, "Enable auto-refresh");
                     ui.horizontal(|ui| {
                         ui.label("Interval (seconds):");
@@ -2453,7 +2516,7 @@ impl eframe::App for PotaHunterApp {
                     });
 
                     ui.separator();
-                    ui.heading("Auto-Hunt on Log");
+                    ui.label(egui::RichText::new("Auto-Hunt on Log").strong().size(15.0));
                     ui.label("Listens for QSOs logged in AC Log and\nautomatically marks matching spots as hunted.");
                     {
                         let is_running = self.n3fjp_listener_running.load(Ordering::SeqCst);
@@ -2493,7 +2556,7 @@ impl eframe::App for PotaHunterApp {
                     }
 
                     ui.separator();
-                    ui.heading("DX Cluster");
+                    ui.label(egui::RichText::new("DX Cluster").strong().size(15.0));
                     ui.label("Connects to DX cluster via telnet.\nSpots are cached for 15 minutes.");
 
                     ui.horizontal(|ui| {
@@ -2552,7 +2615,7 @@ impl eframe::App for PotaHunterApp {
                     }
 
                     ui.separator();
-                    ui.heading("Station Info");
+                    ui.label(egui::RichText::new("Station Info").strong().size(15.0));
                     ui.horizontal(|ui| {
                         ui.label("My Grid Square:");
                         ui.text_edit_singleline(&mut self.my_grid);
@@ -2566,7 +2629,7 @@ impl eframe::App for PotaHunterApp {
                     }
 
                     ui.separator();
-                    ui.heading("Display");
+                    ui.label(egui::RichText::new("Display").strong().size(15.0));
                     if ui.checkbox(&mut self.dark_mode, "Dark mode").changed() {
                         ctx.set_visuals(if self.dark_mode {
                             egui::Visuals::dark()
@@ -2577,7 +2640,16 @@ impl eframe::App for PotaHunterApp {
                     ui.checkbox(&mut self.hide_dupes, "Collapse duplicate spots (show newest per callsign)");
 
                     ui.separator();
-                    if ui.button("Close & Save Settings").clicked() {
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new("✔ Close & Save Settings")
+                                    .color(egui::Color32::WHITE),
+                            )
+                            .fill(egui::Color32::from_rgb(40, 160, 40)),
+                        )
+                        .clicked()
+                    {
                         self.save_current_settings();
                         self.show_settings = false;
                     }
@@ -2585,7 +2657,9 @@ impl eframe::App for PotaHunterApp {
         }
 
         // Bottom panel - status bar
-        egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
+        egui::TopBottomPanel::bottom("bottom_panel")
+            .min_height(26.0)
+            .show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let hunted_count = self.hunted_set.len();
                 ui.label(format!("Hunted: {}", hunted_count));
@@ -2597,17 +2671,19 @@ impl eframe::App for PotaHunterApp {
                 if listener_connected {
                     ui.colored_label(egui::Color32::from_rgb(80, 200, 80), "N3FJP: Connected");
                 } else {
-                    ui.colored_label(egui::Color32::GRAY, format!("N3FJP: {}:{}", self.n3fjp_host, self.n3fjp_port));
+                    ui.colored_label(egui::Color32::GRAY, "N3FJP: Off");
                 }
+
+                ui.separator();
 
                 // DX cluster status indicator
                 let dx_connected = self.dx_state.lock().unwrap().connected;
                 if dx_connected {
-                    ui.colored_label(egui::Color32::from_rgb(80, 200, 80), "| DX: Connected");
+                    ui.colored_label(egui::Color32::from_rgb(80, 200, 80), "DX: Connected");
                 } else if self.dx_running.load(Ordering::SeqCst) {
-                    ui.colored_label(egui::Color32::from_rgb(200, 200, 80), "| DX: Connecting");
+                    ui.colored_label(egui::Color32::from_rgb(200, 200, 80), "DX: Connecting");
                 } else {
-                    ui.colored_label(egui::Color32::GRAY, "| DX: Off");
+                    ui.colored_label(egui::Color32::GRAY, "DX: Off");
                 }
 
                 // N3FJP action status (tuned, logged, etc)
@@ -2631,10 +2707,10 @@ impl eframe::App for PotaHunterApp {
         // Left panel - filters (collapsible)
         if self.show_filters {
             egui::SidePanel::left("filter_panel")
-                .default_width(220.0)
+                .default_width(200.0)
                 .show(ctx, |ui| {
                     ui.horizontal(|ui| {
-                        ui.heading("Filters");
+                        ui.label(egui::RichText::new("Filters").strong().size(15.0));
                         ui.with_layout(
                             egui::Layout::right_to_left(egui::Align::Center),
                             |ui| {
@@ -2657,63 +2733,7 @@ impl eframe::App for PotaHunterApp {
                         self.search_focus_requested = false;
                     }
 
-                ui.add_space(8.0);
-
-                ui.label("Band:");
-                let band_label = if self.filter_bands.is_empty() {
-                    "All".to_string()
-                } else if self.filter_bands.len() == 1 {
-                    self.filter_bands.iter().next().unwrap().clone()
-                } else {
-                    format!("{} selected", self.filter_bands.len())
-                };
-                egui::ComboBox::from_id_salt("band_filter")
-                    .selected_text(&band_label)
-                    .show_ui(ui, |ui| {
-                        if ui.selectable_label(self.filter_bands.is_empty(), "All").clicked() {
-                            self.filter_bands.clear();
-                        }
-                        for band in self.available_bands.clone() {
-                            let selected = self.filter_bands.contains(&band);
-                            if ui.selectable_label(selected, &band).clicked() {
-                                if selected {
-                                    self.filter_bands.remove(&band);
-                                } else {
-                                    self.filter_bands.insert(band);
-                                }
-                            }
-                        }
-                    });
-
-                ui.add_space(4.0);
-
-                ui.label("Mode:");
-                let mode_label = if self.filter_modes.is_empty() {
-                    "All".to_string()
-                } else if self.filter_modes.len() == 1 {
-                    self.filter_modes.iter().next().unwrap().clone()
-                } else {
-                    format!("{} selected", self.filter_modes.len())
-                };
-                egui::ComboBox::from_id_salt("mode_filter")
-                    .selected_text(&mode_label)
-                    .show_ui(ui, |ui| {
-                        if ui.selectable_label(self.filter_modes.is_empty(), "All").clicked() {
-                            self.filter_modes.clear();
-                        }
-                        for mode in self.available_modes.clone() {
-                            let selected = self.filter_modes.contains(&mode);
-                            if ui.selectable_label(selected, &mode).clicked() {
-                                if selected {
-                                    self.filter_modes.remove(&mode);
-                                } else {
-                                    self.filter_modes.insert(mode);
-                                }
-                            }
-                        }
-                    });
-
-                ui.add_space(4.0);
+                ui.add_space(6.0);
 
                 ui.label("Country/Entity:");
                 egui::ComboBox::from_id_salt("country_filter")
@@ -2728,11 +2748,11 @@ impl eframe::App for PotaHunterApp {
                         }
                     });
 
-                ui.add_space(8.0);
+                ui.add_space(6.0);
                 ui.checkbox(&mut self.hide_hunted, "Hide hunted spots");
                 ui.checkbox(&mut self.hide_qrt, "Hide QRT spots");
 
-                ui.add_space(8.0);
+                ui.add_space(6.0);
                 ui.label("Max Spot Age:");
                 ui.horizontal_wrapped(|ui| {
                     for (label, mins) in &[
@@ -2763,7 +2783,7 @@ impl eframe::App for PotaHunterApp {
                 }
 
                 ui.separator();
-                ui.heading("Quick Band Filters");
+                ui.label(egui::RichText::new("Quick Band Filters").strong().size(13.0));
                 ui.horizontal_wrapped(|ui| {
                     // "All" button clears the set
                     if ui
@@ -2788,7 +2808,7 @@ impl eframe::App for PotaHunterApp {
                 });
 
                 ui.separator();
-                ui.heading("Quick Mode Filters");
+                ui.label(egui::RichText::new("Quick Mode Filters").strong().size(13.0));
                 ui.horizontal_wrapped(|ui| {
                     // "All" button clears the set
                     if ui
@@ -2811,7 +2831,7 @@ impl eframe::App for PotaHunterApp {
                 });
 
                 ui.separator();
-                ui.heading("Quick Type Filters");
+                ui.label(egui::RichText::new("Quick Type Filters").strong().size(13.0));
                 ui.horizontal_wrapped(|ui| {
                     if ui
                         .selectable_label(self.filter_types.is_empty(), "All")
@@ -2992,7 +3012,7 @@ impl eframe::App for PotaHunterApp {
                         .striped(true)
                         .min_col_width(40.0)
                         .max_col_width(380.0)
-                        .spacing([12.0, 10.0])
+                        .spacing([8.0, 6.0])
                         .show(ui, |ui| {
                             // Header row
                             let headers: Vec<(SortColumn, String)> = vec![
@@ -3019,7 +3039,7 @@ impl eframe::App for PotaHunterApp {
                                             if ui
                                                 .add(
                                                     egui::Label::new(
-                                                        egui::RichText::new(label).strong(),
+                                                        egui::RichText::new(label).size(15.0).strong(),
                                                     )
                                                     .sense(egui::Sense::click()),
                                                 )
@@ -3033,7 +3053,7 @@ impl eframe::App for PotaHunterApp {
                                     if ui
                                         .add(
                                             egui::Label::new(
-                                                egui::RichText::new(label).strong(),
+                                                egui::RichText::new(label).size(15.0).strong(),
                                             )
                                             .sense(egui::Sense::click()),
                                         )
@@ -3044,7 +3064,7 @@ impl eframe::App for PotaHunterApp {
                                 }
                             }
                             // Action column headers
-                            ui.label(egui::RichText::new("Actions").strong());
+                            ui.label(egui::RichText::new("Actions").size(15.0).strong());
                             ui.end_row();
 
                             // Data rows
@@ -3071,21 +3091,37 @@ impl eframe::App for PotaHunterApp {
 
                                 let band_color = if is_not_heard {
                                     egui::Color32::from_rgb(80, 110, 180)
+                                } else if self.dark_mode {
+                                    match entry.band.as_str() {
+                                        "160m" => egui::Color32::from_rgb(210, 100, 100),
+                                        "80m"  => egui::Color32::from_rgb(210, 150, 80),
+                                        "60m"  => egui::Color32::from_rgb(210, 200, 80),
+                                        "40m"  => egui::Color32::from_rgb(80,  200, 100),
+                                        "30m"  => egui::Color32::from_rgb(80,  200, 180),
+                                        "20m"  => egui::Color32::from_rgb(80,  160, 230),
+                                        "17m"  => egui::Color32::from_rgb(120, 120, 230),
+                                        "15m"  => egui::Color32::from_rgb(180, 100, 230),
+                                        "12m"  => egui::Color32::from_rgb(220, 100, 220),
+                                        "10m"  => egui::Color32::from_rgb(230, 100, 160),
+                                        "6m"   => egui::Color32::from_rgb(230, 120, 100),
+                                        "2m"   => egui::Color32::from_rgb(210, 210, 100),
+                                        _      => egui::Color32::GRAY,
+                                    }
                                 } else {
                                     match entry.band.as_str() {
-                                        "160m" => egui::Color32::from_rgb(180, 130, 130),
-                                        "80m" => egui::Color32::from_rgb(180, 150, 120),
-                                        "60m" => egui::Color32::from_rgb(180, 170, 110),
-                                        "40m" => egui::Color32::from_rgb(130, 170, 130),
-                                        "30m" => egui::Color32::from_rgb(120, 170, 160),
-                                        "20m" => egui::Color32::from_rgb(120, 160, 190),
-                                        "17m" => egui::Color32::from_rgb(130, 140, 190),
-                                        "15m" => egui::Color32::from_rgb(160, 130, 190),
-                                        "12m" => egui::Color32::from_rgb(180, 130, 190),
-                                        "10m" => egui::Color32::from_rgb(190, 130, 160),
-                                        "6m" => egui::Color32::from_rgb(190, 130, 130),
-                                        "2m" => egui::Color32::from_rgb(180, 180, 130),
-                                        _ => egui::Color32::GRAY,
+                                        "160m" => egui::Color32::from_rgb(160, 60,  60),
+                                        "80m"  => egui::Color32::from_rgb(160, 100, 40),
+                                        "60m"  => egui::Color32::from_rgb(150, 140, 30),
+                                        "40m"  => egui::Color32::from_rgb(40,  130, 60),
+                                        "30m"  => egui::Color32::from_rgb(40,  130, 130),
+                                        "20m"  => egui::Color32::from_rgb(40,  100, 180),
+                                        "17m"  => egui::Color32::from_rgb(80,  80,  180),
+                                        "15m"  => egui::Color32::from_rgb(130, 60,  180),
+                                        "12m"  => egui::Color32::from_rgb(170, 60,  170),
+                                        "10m"  => egui::Color32::from_rgb(180, 60,  110),
+                                        "6m"   => egui::Color32::from_rgb(180, 80,  60),
+                                        "2m"   => egui::Color32::from_rgb(160, 160, 60),
+                                        _      => egui::Color32::GRAY,
                                     }
                                 };
 
@@ -3098,9 +3134,9 @@ impl eframe::App for PotaHunterApp {
                                 } else if is_selected {
                                     Some(egui::Color32::from_rgba_premultiplied(80, 120, 200, 60))
                                 } else if entry.hunted {
-                                    Some(egui::Color32::from_rgba_premultiplied(0, 100, 0, 40))
+                                    Some(egui::Color32::from_rgba_premultiplied(0, 100, 0, 50))
                                 } else if is_not_heard {
-                                    Some(egui::Color32::from_rgba_premultiplied(60, 100, 200, 35))
+                                    Some(egui::Color32::from_rgba_premultiplied(60, 100, 200, 55))
                                 } else {
                                     None
                                 };
@@ -3109,11 +3145,20 @@ impl eframe::App for PotaHunterApp {
                                 let row_top = ui.available_rect_before_wrap().top();
 
                                 // Type badge (always full color, even for QRT/greyed spots)
-                                let type_color = match entry.spot_type {
-                                    SpotType::Pota => egui::Color32::from_rgb(60, 160, 60),
-                                    SpotType::Sota => egui::Color32::from_rgb(180, 120, 40),
-                                    SpotType::Dx   => egui::Color32::from_rgb(100, 140, 220),
-                                    SpotType::Wwff => egui::Color32::from_rgb(40, 170, 170),
+                                let type_color = if self.dark_mode {
+                                    match entry.spot_type {
+                                        SpotType::Pota => egui::Color32::from_rgb(80,  210, 80),
+                                        SpotType::Sota => egui::Color32::from_rgb(230, 160, 40),
+                                        SpotType::Dx   => egui::Color32::from_rgb(100, 170, 255),
+                                        SpotType::Wwff => egui::Color32::from_rgb(40,  220, 210),
+                                    }
+                                } else {
+                                    match entry.spot_type {
+                                        SpotType::Pota => egui::Color32::from_rgb(20,  140, 20),
+                                        SpotType::Sota => egui::Color32::from_rgb(180, 100, 0),
+                                        SpotType::Dx   => egui::Color32::from_rgb(40,  80,  200),
+                                        SpotType::Wwff => egui::Color32::from_rgb(0,   150, 150),
+                                    }
                                 };
                                 ui.label(
                                     egui::RichText::new(entry.spot_type.label())
@@ -3138,12 +3183,15 @@ impl eframe::App for PotaHunterApp {
                                 let freq_text = if is_not_heard {
                                     egui::RichText::new(&entry.spot.frequency)
                                         .monospace()
+                                        .size(17.0)
                                         .color(text_color)
                                 } else {
-                                    egui::RichText::new(&entry.spot.frequency).monospace()
+                                    egui::RichText::new(&entry.spot.frequency)
+                                        .monospace()
+                                        .size(17.0)
                                 };
                                 ui.scope(|ui| {
-                                    ui.set_max_width(75.0);
+                                    ui.set_max_width(88.0);
                                     ui.with_layout(
                                         egui::Layout::right_to_left(egui::Align::Center),
                                         |ui| {
@@ -3234,7 +3282,7 @@ impl eframe::App for PotaHunterApp {
                                 };
                                 let row_h = ui.text_style_height(&egui::TextStyle::Body);
                                 ui.add_sized(
-                                    [180.0, row_h],
+                                    [70.0, row_h],
                                     egui::Label::new(loc_text).truncate(),
                                 );
 
@@ -3244,8 +3292,8 @@ impl eframe::App for PotaHunterApp {
                                     .comments
                                     .as_deref()
                                     .unwrap_or("");
-                                let comment_display = if comment.chars().count() > 22 {
-                                    let truncated: String = comment.chars().take(20).collect();
+                                let comment_display = if comment.chars().count() > 28 {
+                                    let truncated: String = comment.chars().take(26).collect();
                                     format!("{}…", truncated)
                                 } else {
                                     comment.to_string()
@@ -3317,10 +3365,10 @@ impl eframe::App for PotaHunterApp {
                                                 .color(egui::Color32::WHITE),
                                         )
                                         .fill(egui::Color32::from_rgb(180, 140, 0))
-                                        .min_size(egui::vec2(36.0, 0.0))
+                                        .min_size(egui::vec2(28.0, 0.0))
                                     } else {
                                         egui::Button::new("📻")
-                                            .min_size(egui::vec2(36.0, 0.0))
+                                            .min_size(egui::vec2(28.0, 0.0))
                                     };
                                     let tune_hover = if is_last_tuned {
                                         "Currently tuned (click to re-tune)"
@@ -3361,7 +3409,7 @@ impl eframe::App for PotaHunterApp {
                                         "Mark as hunted (H)"
                                     };
                                     if ui
-                                        .add(egui::Button::new(hunt_icon).min_size(egui::vec2(36.0, 0.0)))
+                                        .add(egui::Button::new(hunt_icon).min_size(egui::vec2(28.0, 0.0)))
                                         .on_hover_text(hunt_hover)
                                         .clicked()
                                     {
@@ -3384,7 +3432,7 @@ impl eframe::App for PotaHunterApp {
 
                                     // Log QSO button (icon-only)
                                     if ui
-                                        .add(egui::Button::new("📝").min_size(egui::vec2(36.0, 0.0)))
+                                        .add(egui::Button::new("📝").min_size(egui::vec2(28.0, 0.0)))
                                         .on_hover_text("Log QSO to N3FJP AC Log (L)")
                                         .clicked()
                                     {
@@ -3415,15 +3463,30 @@ impl eframe::App for PotaHunterApp {
                                         }
                                     }
 
-                                    // Not-heard toggle button (icon-only)
-                                    let nh_icon = if entry.not_heard { "👂" } else { "🚫" };
-                                    let nh_hover = if entry.not_heard {
-                                        "Heard — click to mark as not heard"
+                                    // Not-heard toggle button — "NH" to mark, "OK" to clear
+                                    let (nh_label, nh_fill, nh_hover) = if entry.not_heard {
+                                        (
+                                            "OK",
+                                            egui::Color32::from_rgb(40, 160, 40),
+                                            "Mark as heard (clear not-heard)",
+                                        )
                                     } else {
-                                        "Mark as not heard"
+                                        (
+                                            "NH",
+                                            egui::Color32::from_rgb(80, 110, 170),
+                                            "Mark as not heard",
+                                        )
                                     };
                                     if ui
-                                        .add(egui::Button::new(nh_icon).min_size(egui::vec2(36.0, 0.0)))
+                                        .add(
+                                            egui::Button::new(
+                                                egui::RichText::new(nh_label)
+                                                    .strong()
+                                                    .color(egui::Color32::WHITE),
+                                            )
+                                            .fill(nh_fill)
+                                            .min_size(egui::vec2(28.0, 0.0)),
+                                        )
                                         .on_hover_text(nh_hover)
                                         .clicked()
                                     {
