@@ -1,4 +1,4 @@
-// KM5E's Base Camp v1.20.0
+// KM5E's Base Camp v1.21.0
 // POTA, SOTA & DX Spot Browser with N3FJP AC Log integration
 // Displays POTA, SOTA and DX cluster spots with radio tuning via N3FJP API
 
@@ -1336,12 +1336,12 @@ const CW_TYPE:      f32 = 48.0;
 const CW_BAND:      f32 = 48.0;
 const CW_MODE:      f32 = 48.0;
 const CW_FREQ:      f32 = 88.0;
-const CW_ACTIVATOR: f32 = 90.0;
+const CW_ACTIVATOR: f32 = 96.0;   // callsigns up to ~12 chars bold
 const CW_REFERENCE: f32 = 72.0;
 const CW_NAME:      f32 = 180.0;
 const CW_LOCATION:  f32 = 80.0;
-const CW_COMMENT:   f32 = 150.0;
-const CW_DIST:      f32 = 72.0;
+const CW_COMMENT:   f32 = 175.0;  // 28-char pre-truncated comment at body font
+const CW_DIST:      f32 = 90.0;   // up to "4085mi 63°" (10 chars)
 const CW_AGE:       f32 = 52.0;
 const CW_ACTIONS:   f32 = 115.0;
 
@@ -3386,7 +3386,8 @@ impl eframe::App for PotaHunterApp {
                                 ui.scope(|ui| {
                                     ui.set_min_width(CW_ACTIVATOR);
                                     ui.set_max_width(CW_ACTIVATOR);
-                                    ui.label(call_text).on_hover_text(dxcc_tip);
+                                    ui.add(egui::Label::new(call_text).truncate())
+                                        .on_hover_text(dxcc_tip);
                                 });
 
                                 // Reference
@@ -3398,7 +3399,7 @@ impl eframe::App for PotaHunterApp {
                                 ui.scope(|ui| {
                                     ui.set_min_width(CW_REFERENCE);
                                     ui.set_max_width(CW_REFERENCE);
-                                    ui.label(ref_text);
+                                    ui.add(egui::Label::new(ref_text).truncate());
                                 });
 
                                 // Park name (truncated)
@@ -3458,7 +3459,8 @@ impl eframe::App for PotaHunterApp {
                                 ui.scope(|ui| {
                                     ui.set_min_width(CW_COMMENT);
                                     ui.set_max_width(CW_COMMENT);
-                                    ui.label(comment_text).on_hover_text(comment);
+                                    ui.add(egui::Label::new(comment_text).truncate())
+                                        .on_hover_text(comment);
                                 });
 
                                 // Distance/bearing from my grid
@@ -3483,7 +3485,7 @@ impl eframe::App for PotaHunterApp {
                                 ui.scope(|ui| {
                                     ui.set_min_width(CW_DIST);
                                     ui.set_max_width(CW_DIST);
-                                    ui.label(dist_text);
+                                    ui.add(egui::Label::new(dist_text).truncate());
                                 });
 
                                 // Spot age (with stale fading)
@@ -3969,7 +3971,7 @@ fn main() -> eframe::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1400.0, 800.0])
         .with_min_inner_size([900.0, 500.0])
-        .with_title("KM5E's Base Camp v1.20.0 — POTA, SOTA & DX Spot Browser");
+        .with_title("KM5E's Base Camp v1.21.0 — POTA, SOTA & DX Spot Browser");
 
     if let Some(icon) = load_icon() {
         viewport = viewport.with_icon(std::sync::Arc::new(icon));
