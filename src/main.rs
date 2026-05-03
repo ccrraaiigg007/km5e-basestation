@@ -1,4 +1,4 @@
-// KM5E's Base Camp v1.19.0
+// KM5E's Base Camp v1.20.0
 // POTA, SOTA & DX Spot Browser with N3FJP AC Log integration
 // Displays POTA, SOTA and DX cluster spots with radio tuning via N3FJP API
 
@@ -1327,6 +1327,23 @@ impl Default for PotaHunterApp {
         }
     }
 }
+
+/// Fixed column widths (pixels) used by both the pinned header grid and the
+/// scrollable data grid.  Because each cell explicitly requests the same width
+/// in both grids the columns are guaranteed to line up regardless of which
+/// egui::Id each grid resolves to internally.
+const CW_TYPE:      f32 = 48.0;
+const CW_BAND:      f32 = 48.0;
+const CW_MODE:      f32 = 48.0;
+const CW_FREQ:      f32 = 88.0;
+const CW_ACTIVATOR: f32 = 90.0;
+const CW_REFERENCE: f32 = 72.0;
+const CW_NAME:      f32 = 180.0;
+const CW_LOCATION:  f32 = 80.0;
+const CW_COMMENT:   f32 = 150.0;
+const CW_DIST:      f32 = 72.0;
+const CW_AGE:       f32 = 52.0;
+const CW_ACTIONS:   f32 = 115.0;
 
 impl PotaHunterApp {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
@@ -3110,34 +3127,21 @@ impl eframe::App for PotaHunterApp {
                         (SortColumn::SpotTime, format!("Age{}", self.sort_indicator(SortColumn::SpotTime))),
                     ];
 
-                    for (col, label) in &headers {
-                        // Right-align Freq and Age headers to match their columns
+                    // Each header cell is wrapped in a scope that forces the exact
+                    // same pixel width as the corresponding data cell below, so the
+                    // two separate grids stay in perfect alignment.
+                    let header_widths = [
+                        CW_TYPE, CW_BAND, CW_MODE, CW_FREQ,
+                        CW_ACTIVATOR, CW_REFERENCE, CW_NAME,
+                        CW_LOCATION, CW_COMMENT, CW_DIST, CW_AGE,
+                    ];
+                    for ((col, label), &cw) in headers.iter().zip(header_widths.iter()) {
                         let is_right_aligned = matches!(col, SortColumn::Frequency | SortColumn::SpotTime);
-                        if is_right_aligned {
-                            // Freq column: constrain header to the same 88px max as data
-                            // cells so the right-aligned text lines up with the numbers.
-                            let mut clicked = false;
-                            if matches!(col, SortColumn::Frequency) {
-                                ui.scope(|ui| {
-                                    ui.set_max_width(88.0);
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            if ui
-                                                .add(
-                                                    egui::Label::new(
-                                                        egui::RichText::new(label).size(15.0).strong(),
-                                                    )
-                                                    .sense(egui::Sense::click()),
-                                                )
-                                                .clicked()
-                                            {
-                                                clicked = true;
-                                            }
-                                        },
-                                    );
-                                });
-                            } else {
+                        let mut clicked = false;
+                        ui.scope(|ui| {
+                            ui.set_min_width(cw);
+                            ui.set_max_width(cw);
+                            if is_right_aligned {
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
@@ -3154,26 +3158,30 @@ impl eframe::App for PotaHunterApp {
                                         }
                                     },
                                 );
-                            }
-                            if clicked {
-                                self.toggle_sort(*col);
-                            }
-                        } else {
-                            if ui
-                                .add(
-                                    egui::Label::new(
-                                        egui::RichText::new(label).size(15.0).strong(),
+                            } else {
+                                if ui
+                                    .add(
+                                        egui::Label::new(
+                                            egui::RichText::new(label).size(15.0).strong(),
+                                        )
+                                        .sense(egui::Sense::click()),
                                     )
-                                    .sense(egui::Sense::click()),
-                                )
-                                .clicked()
-                            {
-                                self.toggle_sort(*col);
+                                    .clicked()
+                                {
+                                    clicked = true;
+                                }
                             }
+                        });
+                        if clicked {
+                            self.toggle_sort(*col);
                         }
                     }
                     // Action column header
-                    ui.label(egui::RichText::new("Actions").size(15.0).strong());
+                    ui.scope(|ui| {
+                        ui.set_min_width(CW_ACTIONS);
+                        ui.set_max_width(CW_ACTIONS);
+                        ui.label(egui::RichText::new("Actions").size(15.0).strong());
+                    });
                     ui.end_row();
                 });
 
@@ -3283,16 +3291,24 @@ impl eframe::App for PotaHunterApp {
                                         SpotType::Wwff => egui::Color32::from_rgb(0,   150, 150),
                                     }
                                 };
-                                ui.label(
-                                    egui::RichText::new(entry.spot_type.label())
-                                        .strong()
-                                        .color(type_color),
-                                );
+                                ui.scope(|ui| {
+                                    ui.set_min_width(CW_TYPE);
+                                    ui.set_max_width(CW_TYPE);
+                                    ui.label(
+                                        egui::RichText::new(entry.spot_type.label())
+                                            .strong()
+                                            .color(type_color),
+                                    );
+                                });
 
                                 // Band
                                 let band_text =
                                     egui::RichText::new(&entry.band).color(band_color);
-                                ui.label(band_text);
+                                ui.scope(|ui| {
+                                    ui.set_min_width(CW_BAND);
+                                    ui.set_max_width(CW_BAND);
+                                    ui.label(band_text);
+                                });
 
                                 // Mode
                                 let mode_text = if is_not_heard {
@@ -3300,7 +3316,11 @@ impl eframe::App for PotaHunterApp {
                                 } else {
                                     egui::RichText::new(&entry.spot.mode)
                                 };
-                                ui.label(mode_text);
+                                ui.scope(|ui| {
+                                    ui.set_min_width(CW_MODE);
+                                    ui.set_max_width(CW_MODE);
+                                    ui.label(mode_text);
+                                });
 
                                 // Frequency (monospace, right-aligned)
                                 let freq_text = if is_not_heard {
@@ -3314,7 +3334,8 @@ impl eframe::App for PotaHunterApp {
                                         .size(17.0)
                                 };
                                 ui.scope(|ui| {
-                                    ui.set_max_width(88.0);
+                                    ui.set_min_width(CW_FREQ);
+                                    ui.set_max_width(CW_FREQ);
                                     ui.with_layout(
                                         egui::Layout::right_to_left(egui::Align::Center),
                                         |ui| {
@@ -3362,7 +3383,11 @@ impl eframe::App for PotaHunterApp {
                                     };
                                     format!("{}\n{}", country, status_desc)
                                 };
-                                ui.label(call_text).on_hover_text(dxcc_tip);
+                                ui.scope(|ui| {
+                                    ui.set_min_width(CW_ACTIVATOR);
+                                    ui.set_max_width(CW_ACTIVATOR);
+                                    ui.label(call_text).on_hover_text(dxcc_tip);
+                                });
 
                                 // Reference
                                 let ref_text = if is_not_heard {
@@ -3370,7 +3395,11 @@ impl eframe::App for PotaHunterApp {
                                 } else {
                                     egui::RichText::new(&entry.spot.reference)
                                 };
-                                ui.label(ref_text);
+                                ui.scope(|ui| {
+                                    ui.set_min_width(CW_REFERENCE);
+                                    ui.set_max_width(CW_REFERENCE);
+                                    ui.label(ref_text);
+                                });
 
                                 // Park name (truncated)
                                 let park = entry.spot.display_park_name();
@@ -3381,7 +3410,7 @@ impl eframe::App for PotaHunterApp {
                                 };
                                 let row_h = ui.text_style_height(&egui::TextStyle::Body);
                                 ui.add_sized(
-                                    [180.0, row_h],
+                                    [CW_NAME, row_h],
                                     egui::Label::new(park_text).truncate(),
                                 );
 
@@ -3405,7 +3434,7 @@ impl eframe::App for PotaHunterApp {
                                 };
                                 let row_h = ui.text_style_height(&egui::TextStyle::Body);
                                 ui.add_sized(
-                                    [70.0, row_h],
+                                    [CW_LOCATION, row_h],
                                     egui::Label::new(loc_text).truncate(),
                                 );
 
@@ -3426,8 +3455,11 @@ impl eframe::App for PotaHunterApp {
                                 } else {
                                     egui::RichText::new(&comment_display)
                                 };
-                                ui.label(comment_text)
-                                    .on_hover_text(comment);
+                                ui.scope(|ui| {
+                                    ui.set_min_width(CW_COMMENT);
+                                    ui.set_max_width(CW_COMMENT);
+                                    ui.label(comment_text).on_hover_text(comment);
+                                });
 
                                 // Distance/bearing from my grid
                                 let dist_display = if !self.my_grid.is_empty() {
@@ -3448,7 +3480,11 @@ impl eframe::App for PotaHunterApp {
                                 } else {
                                     egui::RichText::new(&dist_display)
                                 };
-                                ui.label(dist_text);
+                                ui.scope(|ui| {
+                                    ui.set_min_width(CW_DIST);
+                                    ui.set_max_width(CW_DIST);
+                                    ui.label(dist_text);
+                                });
 
                                 // Spot age (with stale fading)
                                 let time = entry
@@ -3467,18 +3503,25 @@ impl eframe::App for PotaHunterApp {
                                 } else {
                                     egui::Color32::from_rgb(80, 180, 80)
                                 };
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        ui.label(
-                                            egui::RichText::new(&age_str)
-                                                .monospace()
-                                                .color(age_color),
-                                        );
-                                    },
-                                );
+                                ui.scope(|ui| {
+                                    ui.set_min_width(CW_AGE);
+                                    ui.set_max_width(CW_AGE);
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            ui.label(
+                                                egui::RichText::new(&age_str)
+                                                    .monospace()
+                                                    .color(age_color),
+                                            );
+                                        },
+                                    );
+                                });
 
                                 // Action buttons (icon-only for compactness)
+                                ui.scope(|ui| {
+                                    ui.set_min_width(CW_ACTIONS);
+                                    ui.set_max_width(CW_ACTIONS);
                                 ui.horizontal(|ui| {
                                     // Tune button — highlighted when this is the last tuned spot
                                     let tune_button = if is_last_tuned {
@@ -3629,7 +3672,8 @@ impl eframe::App for PotaHunterApp {
                                             entry.not_heard = new_state;
                                         }
                                     }
-                                });
+                                }); // end ui.horizontal
+                                }); // end ui.scope (CW_ACTIONS)
 
                                 // Measure actual row bottom from cursor position
                                 let row_bottom = ui.available_rect_before_wrap().top();
@@ -3925,7 +3969,7 @@ fn main() -> eframe::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1400.0, 800.0])
         .with_min_inner_size([900.0, 500.0])
-        .with_title("KM5E's Base Camp v1.19.0 — POTA, SOTA & DX Spot Browser");
+        .with_title("KM5E's Base Camp v1.20.0 — POTA, SOTA & DX Spot Browser");
 
     if let Some(icon) = load_icon() {
         viewport = viewport.with_icon(std::sync::Arc::new(icon));
