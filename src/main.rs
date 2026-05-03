@@ -1,4 +1,4 @@
-// KM5E's Base Camp v1.13
+// KM5E's Base Camp v1.19.0
 // POTA, SOTA & DX Spot Browser with N3FJP AC Log integration
 // Displays POTA, SOTA and DX cluster spots with radio tuning via N3FJP API
 
@@ -2798,7 +2798,13 @@ impl eframe::App for PotaHunterApp {
                         "12m", "10m", "6m", "2m",
                     ] {
                         let is_selected = self.filter_bands.contains(*band);
-                        if ui.selectable_label(is_selected, *band).clicked() {
+                        let resp = ui.selectable_label(is_selected, *band);
+                        if resp.secondary_clicked() {
+                            // Right-click: select only this band, clearing all others
+                            self.filter_bands.clear();
+                            self.filter_bands.insert(band.to_string());
+                        } else if resp.clicked() {
+                            // Left-click: toggle this band on/off
                             if is_selected {
                                 self.filter_bands.remove(*band);
                             } else {
@@ -2821,7 +2827,13 @@ impl eframe::App for PotaHunterApp {
                     let modes = self.available_modes.clone();
                     for mode in &modes {
                         let is_selected = self.filter_modes.contains(mode.as_str());
-                        if ui.selectable_label(is_selected, mode).clicked() {
+                        let resp = ui.selectable_label(is_selected, mode);
+                        if resp.secondary_clicked() {
+                            // Right-click: select only this mode, clearing all others
+                            self.filter_modes.clear();
+                            self.filter_modes.insert(mode.to_string());
+                        } else if resp.clicked() {
+                            // Left-click: toggle this mode on/off
                             if is_selected {
                                 self.filter_modes.remove(mode.as_str());
                             } else {
@@ -2842,7 +2854,13 @@ impl eframe::App for PotaHunterApp {
                     }
                     for spot_type in &[SpotType::Pota, SpotType::Sota, SpotType::Dx, SpotType::Wwff] {
                         let is_selected = self.filter_types.contains(spot_type);
-                        if ui.selectable_label(is_selected, spot_type.label()).clicked() {
+                        let resp = ui.selectable_label(is_selected, spot_type.label());
+                        if resp.secondary_clicked() {
+                            // Right-click: select only this type, clearing all others
+                            self.filter_types.clear();
+                            self.filter_types.insert(*spot_type);
+                        } else if resp.clicked() {
+                            // Left-click: toggle this type on/off
                             if is_selected {
                                 self.filter_types.remove(spot_type);
                             } else {
@@ -3095,22 +3113,50 @@ impl eframe::App for PotaHunterApp {
                                 // Right-align Freq and Age headers to match their columns
                                 let is_right_aligned = matches!(col, SortColumn::Frequency | SortColumn::SpotTime);
                                 if is_right_aligned {
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            if ui
-                                                .add(
-                                                    egui::Label::new(
-                                                        egui::RichText::new(label).size(15.0).strong(),
+                                    // Freq column: constrain header to the same 88px max as data
+                                    // cells so the right-aligned text lines up with the numbers.
+                                    let mut clicked = false;
+                                    if matches!(col, SortColumn::Frequency) {
+                                        ui.scope(|ui| {
+                                            ui.set_max_width(88.0);
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    if ui
+                                                        .add(
+                                                            egui::Label::new(
+                                                                egui::RichText::new(label).size(15.0).strong(),
+                                                            )
+                                                            .sense(egui::Sense::click()),
+                                                        )
+                                                        .clicked()
+                                                    {
+                                                        clicked = true;
+                                                    }
+                                                },
+                                            );
+                                        });
+                                    } else {
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                if ui
+                                                    .add(
+                                                        egui::Label::new(
+                                                            egui::RichText::new(label).size(15.0).strong(),
+                                                        )
+                                                        .sense(egui::Sense::click()),
                                                     )
-                                                    .sense(egui::Sense::click()),
-                                                )
-                                                .clicked()
-                                            {
-                                                self.toggle_sort(*col);
-                                            }
-                                        },
-                                    );
+                                                    .clicked()
+                                                {
+                                                    clicked = true;
+                                                }
+                                            },
+                                        );
+                                    }
+                                    if clicked {
+                                        self.toggle_sort(*col);
+                                    }
                                 } else {
                                     if ui
                                         .add(
@@ -3864,7 +3910,7 @@ fn main() -> eframe::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1400.0, 800.0])
         .with_min_inner_size([900.0, 500.0])
-        .with_title("KM5E's Base Camp v1.13 — POTA, SOTA & DX Spot Browser");
+        .with_title("KM5E's Base Camp v1.19.0 — POTA, SOTA & DX Spot Browser");
 
     if let Some(icon) = load_icon() {
         viewport = viewport.with_icon(std::sync::Arc::new(icon));
