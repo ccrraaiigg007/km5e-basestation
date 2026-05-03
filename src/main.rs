@@ -3084,97 +3084,112 @@ impl eframe::App for PotaHunterApp {
             ));
             ui.separator();
 
-            egui::ScrollArea::both()
+            // Pinned column headers — rendered outside the scroll area so they
+            // stay visible while the user scrolls through spots vertically.
+            // Both this grid and the data grid below share the same egui::Id
+            // ("spot_grid") so egui reuses the same stored column-width state
+            // for both, keeping the two grids in sync after the first frame.
+            let grid_id = egui::Id::new("spot_grid");
+            egui::Grid::new(grid_id)
+                .striped(false)
+                .min_col_width(40.0)
+                .max_col_width(380.0)
+                .spacing([8.0, 6.0])
+                .show(ui, |ui| {
+                    let headers: Vec<(SortColumn, String)> = vec![
+                        (SortColumn::Type, format!("Type{}", self.sort_indicator(SortColumn::Type))),
+                        (SortColumn::Band, format!("Band{}", self.sort_indicator(SortColumn::Band))),
+                        (SortColumn::Mode, format!("Mode{}", self.sort_indicator(SortColumn::Mode))),
+                        (SortColumn::Frequency, format!("Freq (kHz){}", self.sort_indicator(SortColumn::Frequency))),
+                        (SortColumn::Activator, format!("Activator{}", self.sort_indicator(SortColumn::Activator))),
+                        (SortColumn::Reference, format!("Reference{}", self.sort_indicator(SortColumn::Reference))),
+                        (SortColumn::Park, format!("Name{}", self.sort_indicator(SortColumn::Park))),
+                        (SortColumn::Location, format!("Location{}", self.sort_indicator(SortColumn::Location))),
+                        (SortColumn::Comment, format!("Comment{}", self.sort_indicator(SortColumn::Comment))),
+                        (SortColumn::Distance, format!("Dist{}", self.sort_indicator(SortColumn::Distance))),
+                        (SortColumn::SpotTime, format!("Age{}", self.sort_indicator(SortColumn::SpotTime))),
+                    ];
+
+                    for (col, label) in &headers {
+                        // Right-align Freq and Age headers to match their columns
+                        let is_right_aligned = matches!(col, SortColumn::Frequency | SortColumn::SpotTime);
+                        if is_right_aligned {
+                            // Freq column: constrain header to the same 88px max as data
+                            // cells so the right-aligned text lines up with the numbers.
+                            let mut clicked = false;
+                            if matches!(col, SortColumn::Frequency) {
+                                ui.scope(|ui| {
+                                    ui.set_max_width(88.0);
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if ui
+                                                .add(
+                                                    egui::Label::new(
+                                                        egui::RichText::new(label).size(15.0).strong(),
+                                                    )
+                                                    .sense(egui::Sense::click()),
+                                                )
+                                                .clicked()
+                                            {
+                                                clicked = true;
+                                            }
+                                        },
+                                    );
+                                });
+                            } else {
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui
+                                            .add(
+                                                egui::Label::new(
+                                                    egui::RichText::new(label).size(15.0).strong(),
+                                                )
+                                                .sense(egui::Sense::click()),
+                                            )
+                                            .clicked()
+                                        {
+                                            clicked = true;
+                                        }
+                                    },
+                                );
+                            }
+                            if clicked {
+                                self.toggle_sort(*col);
+                            }
+                        } else {
+                            if ui
+                                .add(
+                                    egui::Label::new(
+                                        egui::RichText::new(label).size(15.0).strong(),
+                                    )
+                                    .sense(egui::Sense::click()),
+                                )
+                                .clicked()
+                            {
+                                self.toggle_sort(*col);
+                            }
+                        }
+                    }
+                    // Action column header
+                    ui.label(egui::RichText::new("Actions").size(15.0).strong());
+                    ui.end_row();
+                });
+
+            ui.separator();
+
+            // Scrollable data rows — vertical scroll only.
+            egui::ScrollArea::vertical()
                 .id_salt("spot_scroll")
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    egui::Grid::new("spot_grid")
+                    egui::Grid::new(grid_id)
                         .striped(true)
                         .min_col_width(40.0)
                         .max_col_width(380.0)
                         .spacing([8.0, 6.0])
                         .show(ui, |ui| {
-                            // Header row
-                            let headers: Vec<(SortColumn, String)> = vec![
-                                (SortColumn::Type, format!("Type{}", self.sort_indicator(SortColumn::Type))),
-                                (SortColumn::Band, format!("Band{}", self.sort_indicator(SortColumn::Band))),
-                                (SortColumn::Mode, format!("Mode{}", self.sort_indicator(SortColumn::Mode))),
-                                (SortColumn::Frequency, format!("Freq (kHz){}", self.sort_indicator(SortColumn::Frequency))),
-                                (SortColumn::Activator, format!("Activator{}", self.sort_indicator(SortColumn::Activator))),
-                                (SortColumn::Reference, format!("Reference{}", self.sort_indicator(SortColumn::Reference))),
-                                (SortColumn::Park, format!("Name{}", self.sort_indicator(SortColumn::Park))),
-                                (SortColumn::Location, format!("Location{}", self.sort_indicator(SortColumn::Location))),
-                                (SortColumn::Comment, format!("Comment{}", self.sort_indicator(SortColumn::Comment))),
-                                (SortColumn::Distance, format!("Dist{}", self.sort_indicator(SortColumn::Distance))),
-                                (SortColumn::SpotTime, format!("Age{}", self.sort_indicator(SortColumn::SpotTime))),
-                            ];
-
-                            for (col, label) in &headers {
-                                // Right-align Freq and Age headers to match their columns
-                                let is_right_aligned = matches!(col, SortColumn::Frequency | SortColumn::SpotTime);
-                                if is_right_aligned {
-                                    // Freq column: constrain header to the same 88px max as data
-                                    // cells so the right-aligned text lines up with the numbers.
-                                    let mut clicked = false;
-                                    if matches!(col, SortColumn::Frequency) {
-                                        ui.scope(|ui| {
-                                            ui.set_max_width(88.0);
-                                            ui.with_layout(
-                                                egui::Layout::right_to_left(egui::Align::Center),
-                                                |ui| {
-                                                    if ui
-                                                        .add(
-                                                            egui::Label::new(
-                                                                egui::RichText::new(label).size(15.0).strong(),
-                                                            )
-                                                            .sense(egui::Sense::click()),
-                                                        )
-                                                        .clicked()
-                                                    {
-                                                        clicked = true;
-                                                    }
-                                                },
-                                            );
-                                        });
-                                    } else {
-                                        ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
-                                            |ui| {
-                                                if ui
-                                                    .add(
-                                                        egui::Label::new(
-                                                            egui::RichText::new(label).size(15.0).strong(),
-                                                        )
-                                                        .sense(egui::Sense::click()),
-                                                    )
-                                                    .clicked()
-                                                {
-                                                    clicked = true;
-                                                }
-                                            },
-                                        );
-                                    }
-                                    if clicked {
-                                        self.toggle_sort(*col);
-                                    }
-                                } else {
-                                    if ui
-                                        .add(
-                                            egui::Label::new(
-                                                egui::RichText::new(label).size(15.0).strong(),
-                                            )
-                                            .sense(egui::Sense::click()),
-                                        )
-                                        .clicked()
-                                    {
-                                        self.toggle_sort(*col);
-                                    }
-                                }
-                            }
-                            // Action column headers
-                            ui.label(egui::RichText::new("Actions").size(15.0).strong());
-                            ui.end_row();
-
                             // Data rows
                             for (row_idx, (original_idx, entry)) in filtered.iter().enumerate() {
                                 // Pre-compute row state
