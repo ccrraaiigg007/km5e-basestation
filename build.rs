@@ -16,7 +16,11 @@ fn main() {
     let ico_path = std::path::Path::new(&out_dir).join("icon.ico");
 
     // Collect each size as raw RGBA bytes.
-    let sizes = ["assets/icon_32.png", "assets/icon_64.png", "assets/icon_256.png"];
+    let sizes = [
+        "assets/icon_32.png",
+        "assets/icon_64.png",
+        "assets/icon_256.png",
+    ];
     let mut icon_dir = ico::IconDir::new(ico::ResourceType::Icon);
 
     for path in &sizes {
@@ -26,12 +30,13 @@ fn main() {
         let (w, h) = img.dimensions();
         let rgba = img.into_raw();
         let icon_image = ico::IconImage::from_rgba_data(w, h, rgba);
-        icon_dir.add_entry(ico::IconDirEntry::encode(&icon_image)
-            .unwrap_or_else(|e| panic!("Failed to encode {}: {}", path, e)));
+        icon_dir.add_entry(
+            ico::IconDirEntry::encode(&icon_image)
+                .unwrap_or_else(|e| panic!("Failed to encode {}: {}", path, e)),
+        );
     }
 
-    let ico_file = std::fs::File::create(&ico_path)
-        .expect("Failed to create icon.ico in OUT_DIR");
+    let ico_file = std::fs::File::create(&ico_path).expect("Failed to create icon.ico in OUT_DIR");
     icon_dir.write(ico_file).expect("Failed to write icon.ico");
 
     // Embed the ICO into the exe via a Windows resource script.

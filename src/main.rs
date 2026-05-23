@@ -1,4 +1,4 @@
-// KM5E's Base Camp v1.21.0
+// KM5E's Base Camp v1.21.3
 // POTA, SOTA & DX Spot Browser with N3FJP AC Log integration
 // Displays POTA, SOTA and DX cluster spots with radio tuning via N3FJP API
 
@@ -171,10 +171,14 @@ impl WwffSpot {
 
         // Normalise timestamp: WWFF uses "2026-05-01 00:46:50" (space separator);
         // spot_age_minutes() expects ISO 8601 with a T separator.
-        let spot_time = self.spot_time_formatted.as_ref().map(|s| s.replacen(' ', "T", 1));
+        let spot_time = self
+            .spot_time_formatted
+            .as_ref()
+            .map(|s| s.replacen(' ', "T", 1));
 
         // Extract programme prefix for location_desc (e.g. "VKFF-1925" -> "VKFF")
-        let loc = self.reference
+        let loc = self
+            .reference
             .find('-')
             .map(|i| self.reference[..i].to_string())
             .unwrap_or_else(|| self.reference.clone());
@@ -187,8 +191,16 @@ impl WwffSpot {
             reference: self.reference.clone(),
             park_name: Some(self.reference_name.clone()),
             spot_time,
-            spotter: if self.spotter.is_empty() { None } else { Some(self.spotter.clone()) },
-            comments: if self.remarks.is_empty() { None } else { Some(self.remarks.clone()) },
+            spotter: if self.spotter.is_empty() {
+                None
+            } else {
+                Some(self.spotter.clone())
+            },
+            comments: if self.remarks.is_empty() {
+                None
+            } else {
+                Some(self.remarks.clone())
+            },
             source: Some("WWFF".to_string()),
             name: Some(self.reference_name.clone()),
             location_desc: Some(loc),
@@ -239,6 +251,7 @@ struct Settings {
     hide_dupes: bool,
     hide_qrt: bool,
     max_age_mins: i64,
+    auto_tune_next_on_log: bool,
 }
 
 impl Default for Settings {
@@ -256,6 +269,7 @@ impl Default for Settings {
             hide_dupes: false,
             hide_qrt: false,
             max_age_mins: 15,
+            auto_tune_next_on_log: false,
         }
     }
 }
@@ -296,10 +310,10 @@ fn grid_to_latlon(grid: &str) -> Option<(f64, f64)> {
     if g[0] < 'A' || g[0] > 'R' || g[1] < 'A' || g[1] > 'R' {
         return None;
     }
-    let lon = (g[0] as i32 - 'A' as i32) as f64 * 20.0 - 180.0
-        + (g[2] as i32 - '0' as i32) as f64 * 2.0;
-    let lat = (g[1] as i32 - 'A' as i32) as f64 * 10.0 - 90.0
-        + (g[3] as i32 - '0' as i32) as f64 * 1.0;
+    let lon =
+        (g[0] as i32 - 'A' as i32) as f64 * 20.0 - 180.0 + (g[2] as i32 - '0' as i32) as f64 * 2.0;
+    let lat =
+        (g[1] as i32 - 'A' as i32) as f64 * 10.0 - 90.0 + (g[3] as i32 - '0' as i32) as f64 * 1.0;
 
     let (lon, lat) = if g.len() >= 6 && g[4].is_ascii_alphabetic() && g[5].is_ascii_alphabetic() {
         (
@@ -479,24 +493,20 @@ impl N3fjpClient {
     fn send_command(&self, cmd: &str) -> Result<String, String> {
         let addr = format!("{}:{}", self.host, self.port);
         let mut stream = TcpStream::connect_timeout(
-            &addr.parse().map_err(|e| format!("Invalid address: {}", e))?,
+            &addr
+                .parse()
+                .map_err(|e| format!("Invalid address: {}", e))?,
             Duration::from_secs(3),
         )
         .map_err(|e| format!("Connection failed: {}", e))?;
 
-        stream
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .ok();
-        stream
-            .set_write_timeout(Some(Duration::from_secs(2)))
-            .ok();
+        stream.set_read_timeout(Some(Duration::from_secs(2))).ok();
+        stream.set_write_timeout(Some(Duration::from_secs(2))).ok();
 
         stream
             .write_all(cmd.as_bytes())
             .map_err(|e| format!("Write failed: {}", e))?;
-        stream
-            .flush()
-            .map_err(|e| format!("Flush failed: {}", e))?;
+        stream.flush().map_err(|e| format!("Flush failed: {}", e))?;
 
         // Brief pause then read response
         std::thread::sleep(Duration::from_millis(200));
@@ -509,10 +519,7 @@ impl N3fjpClient {
 
     /// Change the radio frequency via AC Log rig control
     fn change_freq(&self, freq_mhz: &str) -> Result<String, String> {
-        let cmd = format!(
-            "<CMD><CHANGEFREQ><VALUE>{}</VALUE></CMD>",
-            freq_mhz
-        );
+        let cmd = format!("<CMD><CHANGEFREQ><VALUE>{}</VALUE></CMD>", freq_mhz);
         self.send_command(&cmd)
     }
 
@@ -533,8 +540,8 @@ impl N3fjpClient {
         let mode_val = match mode_upper.as_str() {
             "SSB" | "USB" | "LSB" | "AM" | "FM" => "SSB",
             "CW" => "CW",
-            "FT8" | "FT4" | "RTTY" | "PSK31" | "PSK63" | "JS8"
-            | "DIGITALVOICE" | "OLIVIA" | "MFSK" => "FT8",
+            "FT8" | "FT4" | "RTTY" | "PSK31" | "PSK63" | "JS8" | "DIGITALVOICE" | "OLIVIA"
+            | "MFSK" => "FT8",
             other => other,
         };
 
@@ -569,8 +576,8 @@ impl N3fjpClient {
         let mode_val = match mode_upper.as_str() {
             "SSB" | "USB" | "LSB" | "AM" | "FM" => "SSB",
             "CW" => "CW",
-            "FT8" | "FT4" | "RTTY" | "PSK31" | "PSK63" | "JS8"
-            | "DIGITALVOICE" | "OLIVIA" | "MFSK" => "FT8",
+            "FT8" | "FT4" | "RTTY" | "PSK31" | "PSK63" | "JS8" | "DIGITALVOICE" | "OLIVIA"
+            | "MFSK" => "FT8",
             other => other,
         };
 
@@ -602,10 +609,7 @@ impl N3fjpClient {
     /// Look up DXCC country for a callsign.
     /// Returns (country_name, dxcc_number) or error.
     fn country_lookup(&self, call: &str) -> Result<(String, String), String> {
-        let cmd = format!(
-            "<CMD><COUNTRYLISTLOOKUP><CALL>{}</CALL></CMD>",
-            call
-        );
+        let cmd = format!("<CMD><COUNTRYLISTLOOKUP><CALL>{}</CALL></CMD>", call);
         let resp = self.send_command(&cmd)?;
         let country = parse_xml_tag(&resp, "COUNTRY").unwrap_or_default();
         let dxcc = parse_xml_tag(&resp, "DXCC").unwrap_or_default();
@@ -626,7 +630,9 @@ impl N3fjpClient {
         };
         let cmd = format!(
             "<CMD><ATNO><BAND>{}</BAND><MODE>{}</MODE><COUNTRYWORKED>{}</COUNTRYWORKED></CMD>",
-            band.trim_end_matches('m'), mode_contest, country
+            band.trim_end_matches('m'),
+            mode_contest,
+            country
         );
         let resp = self.send_command(&cmd)?;
         let value = parse_xml_tag(&resp, "VALUE").unwrap_or_default();
@@ -739,8 +745,9 @@ fn n3fjp_listener_thread(
                     }
                 }
             }
-            Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut
-                || e.kind() == std::io::ErrorKind::WouldBlock =>
+            Err(ref e)
+                if e.kind() == std::io::ErrorKind::TimedOut
+                    || e.kind() == std::io::ErrorKind::WouldBlock =>
             {
                 // Normal timeout — just loop and check running flag
                 continue;
@@ -823,9 +830,17 @@ fn parse_dx_live_format(line: &str) -> Option<PotaSpot> {
         mode,
         reference: String::new(),
         park_name: None,
-        spot_time: if time_str.is_empty() { None } else { Some(time_str) },
+        spot_time: if time_str.is_empty() {
+            None
+        } else {
+            Some(time_str)
+        },
         spotter: Some(spotter),
-        comments: if comment.is_empty() { None } else { Some(comment) },
+        comments: if comment.is_empty() {
+            None
+        } else {
+            Some(comment)
+        },
         source: Some("DXCluster".to_string()),
         name: None,
         location_desc: None,
@@ -859,7 +874,10 @@ fn parse_dx_history_format(line: &str) -> Option<PotaSpot> {
     // Find time: look for a token matching HHMMz pattern
     let mut time_str = String::new();
     for token in &tokens[2..] {
-        if token.len() == 5 && token.ends_with('Z') && token[..4].chars().all(|c| c.is_ascii_digit()) {
+        if token.len() == 5
+            && token.ends_with('Z')
+            && token[..4].chars().all(|c| c.is_ascii_digit())
+        {
             time_str = format!("{}:{}", &token[..2], &token[2..4]);
             break;
         }
@@ -887,9 +905,17 @@ fn parse_dx_history_format(line: &str) -> Option<PotaSpot> {
         mode,
         reference: String::new(),
         park_name: None,
-        spot_time: if time_str.is_empty() { None } else { Some(time_str) },
+        spot_time: if time_str.is_empty() {
+            None
+        } else {
+            Some(time_str)
+        },
         spotter,
-        comments: if comment.is_empty() { None } else { Some(comment) },
+        comments: if comment.is_empty() {
+            None
+        } else {
+            Some(comment)
+        },
         source: Some("DXCluster".to_string()),
         name: None,
         location_desc: None,
@@ -914,8 +940,12 @@ fn guess_mode_from_comment_and_freq(comment: &str, freq_str: &str) -> String {
         "SSB".to_string()
     } else {
         let fkhz: f64 = freq_str.parse().unwrap_or(0.0);
-        let band_lower = [1800.0, 3500.0, 7000.0, 10100.0, 14000.0, 18068.0, 21000.0, 24890.0, 28000.0];
-        let cw_upper = [1840.0, 3600.0, 7040.0, 10130.0, 14070.0, 18095.0, 21070.0, 24915.0, 28070.0];
+        let band_lower = [
+            1800.0, 3500.0, 7000.0, 10100.0, 14000.0, 18068.0, 21000.0, 24890.0, 28000.0,
+        ];
+        let cw_upper = [
+            1840.0, 3600.0, 7040.0, 10130.0, 14070.0, 18095.0, 21070.0, 24915.0, 28070.0,
+        ];
         let mut guessed = "SSB";
         for (lo, cu_f) in band_lower.iter().zip(cw_upper.iter()) {
             if fkhz >= *lo && fkhz < *cu_f {
@@ -959,7 +989,12 @@ fn dx_cluster_thread(
 
         {
             let mut st = dx_state.lock().unwrap();
-            st.status = format!("Connecting to {} ({}/{})...", addr, node_idx + 1, nodes.len());
+            st.status = format!(
+                "Connecting to {} ({}/{})...",
+                addr,
+                node_idx + 1,
+                nodes.len()
+            );
             st.connected = false;
         }
 
@@ -1062,7 +1097,9 @@ fn dx_cluster_thread(
                             };
                             let mut st = dx_state.lock().unwrap();
                             st.cached_spots.push(cached);
-                            if let Some(cutoff) = Instant::now().checked_sub(Duration::from_secs(15 * 60)) {
+                            if let Some(cutoff) =
+                                Instant::now().checked_sub(Duration::from_secs(15 * 60))
+                            {
                                 st.cached_spots.retain(|s| s.received_at > cutoff);
                             }
                         }
@@ -1126,15 +1163,31 @@ struct SpotEntry {
 impl SpotEntry {
     /// Generate a consistent unique key for this spot entry.
     fn spot_key(&self) -> String {
-        make_spot_key(self.spot_type, &self.spot.activator, &self.spot.reference)
+        make_spot_key(
+            self.spot_type,
+            &self.spot.activator,
+            &self.spot.reference,
+            &self.band,
+            &self.spot.mode,
+        )
     }
 }
 
 /// Standalone key function usable before SpotEntry is constructed
-fn make_spot_key(spot_type: SpotType, activator: &str, reference: &str) -> String {
+fn make_spot_key(
+    spot_type: SpotType,
+    activator: &str,
+    reference: &str,
+    band: &str,
+    mode: &str,
+) -> String {
+    let band = band.trim().to_uppercase();
+    let mode = mode.trim().to_uppercase();
     match spot_type {
-        SpotType::Pota | SpotType::Sota | SpotType::Wwff => format!("{}-{}", activator, reference),
-        SpotType::Dx => format!("DX-{}", activator),
+        SpotType::Pota | SpotType::Sota | SpotType::Wwff => {
+            format!("{}-{}-{}-{}", activator, reference, band, mode)
+        }
+        SpotType::Dx => format!("DX-{}-{}-{}", activator, band, mode),
     }
 }
 
@@ -1157,7 +1210,7 @@ struct PotaHunterApp {
     n3fjp_host: String,
     n3fjp_port: String,
     n3fjp_status: String,
-    n3fjp_status_snapshot: String,        // previous value for change detection
+    n3fjp_status_snapshot: String, // previous value for change detection
     n3fjp_status_changed_at: Option<Instant>, // when status last changed (for timeout)
 
     // N3FJP event listener (auto-hunt on log)
@@ -1167,7 +1220,7 @@ struct PotaHunterApp {
 
     // DX Cluster settings
     dx_callsign: String,
-    dx_nodes: String,  // newline-separated "host:port" list
+    dx_nodes: String, // newline-separated "host:port" list
     dx_auto_start: bool,
     dx_running: Arc<AtomicBool>,
     dx_state: Arc<Mutex<DxClusterState>>,
@@ -1181,7 +1234,7 @@ struct PotaHunterApp {
     hide_hunted: bool,
     hide_dupes: bool,
     hide_qrt: bool,
-    max_age_mins: i64,  // 0 = no limit
+    max_age_mins: i64, // 0 = no limit
 
     // Available filter options (populated from spots)
     available_bands: Vec<String>,
@@ -1195,19 +1248,22 @@ struct PotaHunterApp {
     // Hunted callsigns (persisted in memory for session)
     hunted_set: HashSet<String>,
 
-    // Not-heard spots (keyed on activator-reference)
+    // Not-heard spots (keyed on activator-reference-band-mode, or DX-activator-band-mode)
     not_heard_set: HashSet<String>,
 
-    // Last tuned spot key (activator-reference)
+    // Automatically advance and tune after a successful Log QSO action
+    auto_tune_next_on_log: bool,
+
+    // Last tuned spot key (activator-reference-band-mode, or DX-activator-band-mode)
     last_tuned_key: Option<String>,
 
     // DXCC / ATNO lookup caches
-    dxcc_cache: HashMap<String, (String, String)>,   // callsign -> (country, dxcc_num)
-    atno_cache: HashMap<String, String>,             // "country|band|mode" -> ATNO status
+    dxcc_cache: HashMap<String, (String, String)>, // callsign -> (country, dxcc_num)
+    atno_cache: HashMap<String, String>,           // "country|band|mode" -> ATNO status
     dxcc_lookup_running: Arc<AtomicBool>,
-    dxcc_pending: Arc<Mutex<Vec<(String, String, String)>>>,         // (call, band, mode)
-    dxcc_results: Arc<Mutex<Vec<(String, String, String, String)>>>,  // (cache_key, call, country, status)
-    atno_alert_count: usize,  // count of ATNO/new band-mode spots
+    dxcc_pending: Arc<Mutex<Vec<(String, String, String)>>>, // (call, band, mode)
+    dxcc_results: Arc<Mutex<Vec<(String, String, String, String)>>>, // (cache_key, call, country, status)
+    atno_alert_count: usize, // count of ATNO/new band-mode spots
 
     // Grid square for distance/bearing
     my_grid: String,
@@ -1220,7 +1276,7 @@ struct PotaHunterApp {
     sort_ascending: bool,
 
     // UI state
-    first_frame: bool,  // re-apply saved theme on frame 1 to override system theme
+    first_frame: bool, // re-apply saved theme on frame 1 to override system theme
     show_settings: bool,
     show_filters: bool,
     search_focus_requested: bool,
@@ -1230,9 +1286,9 @@ struct PotaHunterApp {
     // Filtered spot keys in display order (for keyboard navigation)
     filtered_keys: Vec<String>,
     // Context menu state (rendered outside grid to avoid extra cells)
-    ctx_menu_row: Option<usize>,           // filtered row index
-    ctx_menu_original_idx: Option<usize>,  // original spots index
-    ctx_menu_spot: Option<PotaSpot>,       // cloned spot data
+    ctx_menu_row: Option<usize>,          // filtered row index
+    ctx_menu_original_idx: Option<usize>, // original spots index
+    ctx_menu_spot: Option<PotaSpot>,      // cloned spot data
     ctx_menu_spot_type: Option<SpotType>,
     ctx_menu_spot_key: Option<String>,
     ctx_menu_pos: Option<egui::Pos2>,
@@ -1298,6 +1354,7 @@ impl Default for PotaHunterApp {
             refresh_interval_secs: s.refresh_interval_secs,
             hunted_set: HashSet::new(),
             not_heard_set: HashSet::new(),
+            auto_tune_next_on_log: s.auto_tune_next_on_log,
             last_tuned_key: None,
             dxcc_cache: HashMap::new(),
             atno_cache: HashMap::new(),
@@ -1332,18 +1389,18 @@ impl Default for PotaHunterApp {
 /// scrollable data grid.  Because each cell explicitly requests the same width
 /// in both grids the columns are guaranteed to line up regardless of which
 /// egui::Id each grid resolves to internally.
-const CW_TYPE:      f32 = 48.0;
-const CW_BAND:      f32 = 48.0;
-const CW_MODE:      f32 = 48.0;
-const CW_FREQ:      f32 = 88.0;
-const CW_ACTIVATOR: f32 = 96.0;   // callsigns up to ~12 chars bold
+const CW_TYPE: f32 = 48.0;
+const CW_BAND: f32 = 48.0;
+const CW_MODE: f32 = 48.0;
+const CW_FREQ: f32 = 88.0;
+const CW_ACTIVATOR: f32 = 96.0; // callsigns up to ~12 chars bold
 const CW_REFERENCE: f32 = 72.0;
-const CW_NAME:      f32 = 180.0;
-const CW_LOCATION:  f32 = 80.0;
-const CW_COMMENT:   f32 = 175.0;  // 28-char pre-truncated comment at body font
-const CW_DIST:      f32 = 90.0;   // up to "4085mi 63°" (10 chars)
-const CW_AGE:       f32 = 52.0;
-const CW_ACTIONS:   f32 = 115.0;
+const CW_NAME: f32 = 180.0;
+const CW_LOCATION: f32 = 80.0;
+const CW_COMMENT: f32 = 175.0; // 28-char pre-truncated comment at body font
+const CW_DIST: f32 = 90.0; // up to "4085mi 63°" (10 chars)
+const CW_AGE: f32 = 52.0;
+const CW_ACTIONS: f32 = 115.0;
 
 impl PotaHunterApp {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
@@ -1396,8 +1453,8 @@ impl PotaHunterApp {
 
         // Load Consolas as the primary monospace font (frequency readouts, age column)
         let consolas_paths = [
-            "C:\\Windows\\Fonts\\consola.ttf",   // Consolas Regular
-            "C:\\Windows\\Fonts\\lucon.ttf",      // Lucida Console fallback
+            "C:\\Windows\\Fonts\\consola.ttf", // Consolas Regular
+            "C:\\Windows\\Fonts\\lucon.ttf",   // Lucida Console fallback
         ];
         for path in &consolas_paths {
             if let Ok(font_data) = std::fs::read(path) {
@@ -1414,8 +1471,8 @@ impl PotaHunterApp {
 
         // Load emoji font (Segoe UI Emoji on Windows) as fallback
         let emoji_paths = [
-            "C:\\Windows\\Fonts\\seguiemj.ttf",  // Windows Segoe UI Emoji
-            "C:\\Windows\\Fonts\\segoeui.ttf",    // Segoe UI (fallback)
+            "C:\\Windows\\Fonts\\seguiemj.ttf", // Windows Segoe UI Emoji
+            "C:\\Windows\\Fonts\\segoeui.ttf",  // Segoe UI (fallback)
         ];
         for path in &emoji_paths {
             if let Ok(font_data) = std::fs::read(path) {
@@ -1436,9 +1493,9 @@ impl PotaHunterApp {
         // characters. Open Sans and the emoji font have no CJK glyphs, so without
         // this park names like "南京" render as squares.
         let cjk_paths = [
-            "C:\\Windows\\Fonts\\msyh.ttc",   // Microsoft YaHei (Simplified Chinese)
-            "C:\\Windows\\Fonts\\msyhbd.ttc",  // Microsoft YaHei Bold
-            "C:\\Windows\\Fonts\\simsun.ttc",  // SimSun (older Windows fallback)
+            "C:\\Windows\\Fonts\\msyh.ttc", // Microsoft YaHei (Simplified Chinese)
+            "C:\\Windows\\Fonts\\msyhbd.ttc", // Microsoft YaHei Bold
+            "C:\\Windows\\Fonts\\simsun.ttc", // SimSun (older Windows fallback)
         ];
         for path in &cjk_paths {
             if let Ok(font_data) = std::fs::read(path) {
@@ -1505,8 +1562,103 @@ impl PotaHunterApp {
             hide_dupes: self.hide_dupes,
             hide_qrt: self.hide_qrt,
             max_age_mins: self.max_age_mins,
+            auto_tune_next_on_log: self.auto_tune_next_on_log,
         };
         save_settings(&s);
+    }
+
+    fn tune_spot(&mut self, spot: &PotaSpot, spot_key: String, status_prefix: &str) -> bool {
+        let port: u16 = self.n3fjp_port.parse().unwrap_or(1100);
+        let client = N3fjpClient::new(&self.n3fjp_host, port);
+        match client.tune_to_spot(spot) {
+            Ok(_) => {
+                self.n3fjp_status = format!(
+                    "{}Tuned to {} on {} kHz",
+                    status_prefix, spot.activator, spot.frequency
+                );
+                self.last_tuned_key = Some(spot_key);
+                true
+            }
+            Err(e) => {
+                self.n3fjp_status = format!("{}Tune failed: {}", status_prefix, e);
+                false
+            }
+        }
+    }
+
+    fn tune_visible_row(
+        &mut self,
+        row_idx: usize,
+        filtered: &[(usize, SpotEntry)],
+        status_prefix: &str,
+    ) -> bool {
+        if let Some((_, entry)) = filtered.get(row_idx) {
+            let spot_key = entry.spot_key();
+            let spot = entry.spot.clone();
+            self.selected_row_idx = Some(row_idx);
+            self.selected_spot_key = Some(spot_key.clone());
+            self.scroll_to_selected = true;
+            self.tune_spot(&spot, spot_key, status_prefix)
+        } else {
+            self.n3fjp_status = "No spot selected".to_string();
+            false
+        }
+    }
+
+    fn tune_next_visible_spot(
+        &mut self,
+        current_row_idx: Option<usize>,
+        filtered: &[(usize, SpotEntry)],
+        status_prefix: &str,
+    ) -> bool {
+        if filtered.is_empty() {
+            self.n3fjp_status = "No spots to tune".to_string();
+            return false;
+        }
+
+        let start_idx = match current_row_idx {
+            Some(idx) if idx + 1 < filtered.len() => idx + 1,
+            Some(_) => 0,
+            None => 0,
+        };
+
+        let next_idx = (start_idx..filtered.len())
+            .chain(0..start_idx)
+            .find(|&idx| {
+                if Some(idx) == current_row_idx {
+                    return false;
+                }
+                let entry = &filtered[idx].1;
+                !entry.hunted && !entry.not_heard
+            });
+
+        let Some(next_idx) = next_idx else {
+            self.n3fjp_status = "No next unworked spot to tune".to_string();
+            return false;
+        };
+
+        self.tune_visible_row(next_idx, filtered, status_prefix)
+    }
+
+    fn mark_logged_success(
+        &mut self,
+        original_idx: usize,
+        entry: &SpotEntry,
+        current_row_idx: usize,
+        filtered: &[(usize, SpotEntry)],
+    ) {
+        self.n3fjp_status = format!("Logged {} to AC Log", entry.spot.activator);
+        let key = entry.spot_key();
+        self.hunted_set.insert(key);
+        let mut state = self.state.lock().unwrap();
+        if let Some(e) = state.spots.get_mut(original_idx) {
+            e.hunted = true;
+        }
+        drop(state);
+
+        if self.auto_tune_next_on_log {
+            self.tune_next_visible_spot(Some(current_row_idx), filtered, "Logged -> ");
+        }
     }
 
     /// Kick off a background thread to fetch spots from POTA API
@@ -1551,10 +1703,15 @@ impl PotaHunterApp {
                 Ok(spots) => {
                     for spot in spots {
                         let band = freq_to_band(&spot.frequency);
-                        let country = location_to_country(
-                            spot.location_desc.as_deref().unwrap_or(""),
+                        let country =
+                            location_to_country(spot.location_desc.as_deref().unwrap_or(""));
+                        let key = make_spot_key(
+                            SpotType::Pota,
+                            &spot.activator,
+                            &spot.reference,
+                            &band,
+                            &spot.mode,
                         );
-                        let key = make_spot_key(SpotType::Pota, &spot.activator, &spot.reference);
                         let hunted_flag = hunted.contains(&key);
                         let not_heard_flag = not_heard.contains(&key);
                         let is_qrt = spot
@@ -1587,10 +1744,15 @@ impl PotaHunterApp {
                     for sota_spot in spots {
                         let spot = sota_spot.to_pota_spot();
                         let band = freq_to_band(&spot.frequency);
-                        let country = location_to_country(
-                            spot.location_desc.as_deref().unwrap_or(""),
+                        let country =
+                            location_to_country(spot.location_desc.as_deref().unwrap_or(""));
+                        let key = make_spot_key(
+                            SpotType::Sota,
+                            &spot.activator,
+                            &spot.reference,
+                            &band,
+                            &spot.mode,
                         );
-                        let key = make_spot_key(SpotType::Sota, &spot.activator, &spot.reference);
                         let hunted_flag = hunted.contains(&key);
                         let not_heard_flag = not_heard.contains(&key);
                         let is_qrt = spot
@@ -1627,10 +1789,15 @@ impl PotaHunterApp {
                     for wwff_spot in spots {
                         let spot = wwff_spot.to_pota_spot();
                         let band = freq_to_band(&spot.frequency);
-                        let country = location_to_country(
-                            spot.location_desc.as_deref().unwrap_or(""),
+                        let country =
+                            location_to_country(spot.location_desc.as_deref().unwrap_or(""));
+                        let key = make_spot_key(
+                            SpotType::Wwff,
+                            &spot.activator,
+                            &spot.reference,
+                            &band,
+                            &spot.mode,
                         );
-                        let key = make_spot_key(SpotType::Wwff, &spot.activator, &spot.reference);
                         let hunted_flag = hunted.contains(&key);
                         let not_heard_flag = not_heard.contains(&key);
                         let is_qrt = spot
@@ -1664,7 +1831,13 @@ impl PotaHunterApp {
             // Process DX cluster cached spots
             for spot in dx_spots {
                 let band = freq_to_band(&spot.frequency);
-                let key = make_spot_key(SpotType::Dx, &spot.activator, &spot.reference);
+                let key = make_spot_key(
+                    SpotType::Dx,
+                    &spot.activator,
+                    &spot.reference,
+                    &band,
+                    &spot.mode,
+                );
                 let hunted_flag = hunted.contains(&key);
                 let not_heard_flag = not_heard.contains(&key);
                 let is_qrt = false;
@@ -1676,8 +1849,8 @@ impl PotaHunterApp {
                     hunted: hunted_flag,
                     is_qrt,
                     not_heard: not_heard_flag,
-                            dxcc_country: None,
-                            atno_status: None,
+                    dxcc_country: None,
+                    atno_status: None,
                 });
             }
 
@@ -1771,9 +1944,7 @@ impl PotaHunterApp {
                 }
                 // Max age filter (0 = no limit)
                 if self.max_age_mins > 0 {
-                    let age = spot_age_minutes(
-                        entry.spot.spot_time.as_deref().unwrap_or(""),
-                    );
+                    let age = spot_age_minutes(entry.spot.spot_time.as_deref().unwrap_or(""));
                     if age > self.max_age_mins && age < 999 {
                         return false;
                     }
@@ -1788,9 +1959,7 @@ impl PotaHunterApp {
         let asc = self.sort_ascending;
         result.sort_by(|(_, a), (_, b)| {
             let ordering = match col {
-                SortColumn::Type => {
-                    a.spot_type.label().cmp(b.spot_type.label())
-                }
+                SortColumn::Type => a.spot_type.label().cmp(b.spot_type.label()),
                 SortColumn::Activator => a.spot.activator.cmp(&b.spot.activator),
                 SortColumn::Frequency => {
                     let fa: f64 = a.spot.frequency.parse().unwrap_or(0.0);
@@ -1814,8 +1983,18 @@ impl PotaHunterApp {
                 SortColumn::Distance => {
                     // Sort by distance numerically - can't easily compute here
                     // so just compare grid strings as a proxy
-                    let ga = a.spot.grid6.as_deref().or(a.spot.grid4.as_deref()).unwrap_or("");
-                    let gb = b.spot.grid6.as_deref().or(b.spot.grid4.as_deref()).unwrap_or("");
+                    let ga = a
+                        .spot
+                        .grid6
+                        .as_deref()
+                        .or(a.spot.grid4.as_deref())
+                        .unwrap_or("");
+                    let gb = b
+                        .spot
+                        .grid6
+                        .as_deref()
+                        .or(b.spot.grid4.as_deref())
+                        .unwrap_or("");
                     ga.cmp(gb)
                 }
                 SortColumn::SpotTime => {
@@ -1911,7 +2090,7 @@ impl PotaHunterApp {
             for entry in &mut state.spots {
                 if entry.spot.activator.to_uppercase() == logged_upper && !entry.hunted {
                     entry.hunted = true;
-                    let key = format!("{}-{}", entry.spot.activator, entry.spot.reference);
+                    let key = entry.spot_key();
                     self.hunted_set.insert(key);
                     self.n3fjp_status = format!(
                         "✅ Auto-hunted {} ({})",
@@ -2022,9 +2201,8 @@ impl PotaHunterApp {
 
         std::thread::spawn(move || {
             let client = N3fjpClient::new(&host, port);
-            let items: Vec<(String, String, String)> = {
-                pending_arc.lock().unwrap().drain(..).collect()
-            };
+            let items: Vec<(String, String, String)> =
+                { pending_arc.lock().unwrap().drain(..).collect() };
 
             let mut results: Vec<(String, String, String, String)> = Vec::new();
             let mut call_country: HashMap<String, (String, String)> = HashMap::new();
@@ -2041,7 +2219,12 @@ impl PotaHunterApp {
                             result
                         }
                         Err(_) => {
-                            results.push((cache_key, call.clone(), String::new(), "ERR".to_string()));
+                            results.push((
+                                cache_key,
+                                call.clone(),
+                                String::new(),
+                                "ERR".to_string(),
+                            ));
                             continue;
                         }
                     }
@@ -2091,7 +2274,9 @@ impl PotaHunterApp {
         for entry in &mut state.spots {
             let cache_key = format!(
                 "{}|{}|{}",
-                entry.spot.activator, entry.band, entry.spot.mode.to_uppercase()
+                entry.spot.activator,
+                entry.band,
+                entry.spot.mode.to_uppercase()
             );
 
             if let Some(status) = self.atno_cache.get(&cache_key) {
@@ -2260,7 +2445,18 @@ impl eframe::App for PotaHunterApp {
         ctx.request_repaint_after(Duration::from_secs(1));
 
         // Keyboard shortcuts — capture key states first
-        let (key_down, key_up, key_r, key_enter, key_h, key_l, key_n, key_slash, key_esc) = ctx.input(|i| {
+        let (
+            key_down,
+            key_up,
+            key_r,
+            key_enter,
+            key_h,
+            key_l,
+            key_n,
+            key_shift_t,
+            key_slash,
+            key_esc,
+        ) = ctx.input(|i| {
             (
                 i.key_pressed(egui::Key::ArrowDown),
                 i.key_pressed(egui::Key::ArrowUp),
@@ -2269,6 +2465,10 @@ impl eframe::App for PotaHunterApp {
                 i.key_pressed(egui::Key::H) && !i.modifiers.any(),
                 i.key_pressed(egui::Key::L) && !i.modifiers.any(),
                 i.key_pressed(egui::Key::N) && !i.modifiers.any(),
+                i.key_pressed(egui::Key::T)
+                    && i.modifiers.shift
+                    && !i.modifiers.ctrl
+                    && !i.modifiers.alt,
                 i.key_pressed(egui::Key::Slash),
                 i.key_pressed(egui::Key::Escape),
             )
@@ -2282,7 +2482,8 @@ impl eframe::App for PotaHunterApp {
             });
         }
         // Rebuild filtered_keys so they reflect the current display order.
-        self.filtered_keys = self.get_filtered_spots()
+        self.filtered_keys = self
+            .get_filtered_spots()
             .iter()
             .map(|(_, e)| e.spot_key())
             .collect();
@@ -2292,13 +2493,18 @@ impl eframe::App for PotaHunterApp {
         // navigating among duplicate-key rows (multiple DX spots for the same callsign)
         // keeps the correct row highlighted.
         {
-            let still_valid = self.selected_row_idx
+            let still_valid = self
+                .selected_row_idx
                 .and_then(|i| self.filtered_keys.get(i))
-                .map_or(false, |k| Some(k.as_str()) == self.selected_spot_key.as_deref());
+                .map_or(false, |k| {
+                    Some(k.as_str()) == self.selected_spot_key.as_deref()
+                });
             if !still_valid {
                 // The previously selected row is gone or out of bounds — find the
                 // first row that still carries the same logical spot key.
-                self.selected_row_idx = self.selected_spot_key.as_ref()
+                self.selected_row_idx = self
+                    .selected_spot_key
+                    .as_ref()
                     .and_then(|k| self.filtered_keys.iter().position(|fk| fk == k));
             }
         }
@@ -2362,18 +2568,18 @@ impl eframe::App for PotaHunterApp {
                     let size = egui::vec2(36.0, 36.0);
                     ui.image((tex.id(), size));
                 }
-                ui.label(
-                    egui::RichText::new("Base Camp")
-                        .strong()
-                        .size(18.0),
-                );
+                ui.label(egui::RichText::new("Base Camp").strong().size(18.0));
                 ui.separator();
 
                 let (is_fetching, last_fetch) = {
                     let state = self.state.lock().unwrap();
                     (state.is_fetching, state.last_fetch)
                 };
-                let btn_text = if is_fetching { "⏳ Refreshing..." } else { "🔄 Refresh" };
+                let btn_text = if is_fetching {
+                    "⏳ Refreshing..."
+                } else {
+                    "🔄 Refresh"
+                };
                 if ui
                     .add_enabled(!is_fetching, egui::Button::new(btn_text))
                     .on_hover_text("Fetch spots now (R)")
@@ -2392,7 +2598,11 @@ impl eframe::App for PotaHunterApp {
                 }
 
                 ui.separator();
-                let filter_icon = if self.show_filters { "☰ Filters" } else { "☰ Filters ▸" };
+                let filter_icon = if self.show_filters {
+                    "☰ Filters"
+                } else {
+                    "☰ Filters ▸"
+                };
                 if ui
                     .button(filter_icon)
                     .on_hover_text("Show/hide filter sidebar")
@@ -2468,7 +2678,9 @@ impl eframe::App for PotaHunterApp {
                             )
                             .fill(egui::Color32::from_rgb(200, 40, 40)),
                         )
-                        .on_hover_text("New DXCC entities or new band/mode combinations — click to dismiss")
+                        .on_hover_text(
+                            "New DXCC entities or new band/mode combinations — click to dismiss",
+                        )
                         .clicked()
                     {
                         self.atno_alert_count = 0;
@@ -2536,6 +2748,10 @@ impl eframe::App for PotaHunterApp {
                     ui.separator();
                     ui.label(egui::RichText::new("Auto-Hunt on Log").strong().size(15.0));
                     ui.label("Listens for QSOs logged in AC Log and\nautomatically marks matching spots as hunted.");
+                    ui.checkbox(
+                        &mut self.auto_tune_next_on_log,
+                        "After Log QSO, tune the next visible spot",
+                    );
                     {
                         let is_running = self.n3fjp_listener_running.load(Ordering::SeqCst);
                         let is_connected = *self.n3fjp_listener_connected.lock().unwrap();
@@ -2678,49 +2894,49 @@ impl eframe::App for PotaHunterApp {
         egui::TopBottomPanel::bottom("bottom_panel")
             .min_height(26.0)
             .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                let hunted_count = self.hunted_set.len();
-                ui.label(format!("Hunted: {}", hunted_count));
+                ui.horizontal(|ui| {
+                    let hunted_count = self.hunted_set.len();
+                    ui.label(format!("Hunted: {}", hunted_count));
 
-                ui.separator();
-
-                // N3FJP status indicator
-                let listener_connected = *self.n3fjp_listener_connected.lock().unwrap();
-                if listener_connected {
-                    ui.colored_label(egui::Color32::from_rgb(80, 200, 80), "N3FJP: Connected");
-                } else {
-                    ui.colored_label(egui::Color32::GRAY, "N3FJP: Off");
-                }
-
-                ui.separator();
-
-                // DX cluster status indicator
-                let dx_connected = self.dx_state.lock().unwrap().connected;
-                if dx_connected {
-                    ui.colored_label(egui::Color32::from_rgb(80, 200, 80), "DX: Connected");
-                } else if self.dx_running.load(Ordering::SeqCst) {
-                    ui.colored_label(egui::Color32::from_rgb(200, 200, 80), "DX: Connecting");
-                } else {
-                    ui.colored_label(egui::Color32::GRAY, "DX: Off");
-                }
-
-                // N3FJP action status (tuned, logged, etc)
-                if !self.n3fjp_status.is_empty() {
                     ui.separator();
-                    ui.label(&self.n3fjp_status);
-                }
 
-                // Fetch errors (POTA/SOTA/DX)
-                let fetch_err = {
-                    let state = self.state.lock().unwrap();
-                    state.fetch_error.clone()
-                };
-                if let Some(err) = fetch_err {
+                    // N3FJP status indicator
+                    let listener_connected = *self.n3fjp_listener_connected.lock().unwrap();
+                    if listener_connected {
+                        ui.colored_label(egui::Color32::from_rgb(80, 200, 80), "N3FJP: Connected");
+                    } else {
+                        ui.colored_label(egui::Color32::GRAY, "N3FJP: Off");
+                    }
+
                     ui.separator();
-                    ui.colored_label(egui::Color32::from_rgb(220, 80, 80), err);
-                }
+
+                    // DX cluster status indicator
+                    let dx_connected = self.dx_state.lock().unwrap().connected;
+                    if dx_connected {
+                        ui.colored_label(egui::Color32::from_rgb(80, 200, 80), "DX: Connected");
+                    } else if self.dx_running.load(Ordering::SeqCst) {
+                        ui.colored_label(egui::Color32::from_rgb(200, 200, 80), "DX: Connecting");
+                    } else {
+                        ui.colored_label(egui::Color32::GRAY, "DX: Off");
+                    }
+
+                    // N3FJP action status (tuned, logged, etc)
+                    if !self.n3fjp_status.is_empty() {
+                        ui.separator();
+                        ui.label(&self.n3fjp_status);
+                    }
+
+                    // Fetch errors (POTA/SOTA/DX)
+                    let fetch_err = {
+                        let state = self.state.lock().unwrap();
+                        state.fetch_error.clone()
+                    };
+                    if let Some(err) = fetch_err {
+                        ui.separator();
+                        ui.colored_label(egui::Color32::from_rgb(220, 80, 80), err);
+                    }
+                });
             });
-        });
 
         // Left panel - filters (collapsible)
         if self.show_filters {
@@ -2729,18 +2945,11 @@ impl eframe::App for PotaHunterApp {
                 .show(ctx, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(egui::RichText::new("Filters").strong().size(15.0));
-                        ui.with_layout(
-                            egui::Layout::right_to_left(egui::Align::Center),
-                            |ui| {
-                                if ui
-                                    .small_button("⏴")
-                                    .on_hover_text("Hide filters")
-                                    .clicked()
-                                {
-                                    self.show_filters = false;
-                                }
-                            },
-                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("⏴").on_hover_text("Hide filters").clicked() {
+                                self.show_filters = false;
+                            }
+                        });
                     });
                     ui.separator();
 
@@ -2751,154 +2960,168 @@ impl eframe::App for PotaHunterApp {
                         self.search_focus_requested = false;
                     }
 
-                ui.add_space(6.0);
+                    ui.add_space(6.0);
 
-                ui.label("Country/Entity:");
-                egui::ComboBox::from_id_salt("country_filter")
-                    .selected_text(&self.filter_country)
-                    .show_ui(ui, |ui| {
-                        for country in self.available_countries.clone() {
-                            ui.selectable_value(
-                                &mut self.filter_country,
-                                country.clone(),
-                                &country,
-                            );
+                    ui.label("Country/Entity:");
+                    egui::ComboBox::from_id_salt("country_filter")
+                        .selected_text(&self.filter_country)
+                        .show_ui(ui, |ui| {
+                            for country in self.available_countries.clone() {
+                                ui.selectable_value(
+                                    &mut self.filter_country,
+                                    country.clone(),
+                                    &country,
+                                );
+                            }
+                        });
+
+                    ui.add_space(6.0);
+                    ui.checkbox(&mut self.hide_hunted, "Hide hunted spots");
+                    ui.checkbox(&mut self.hide_qrt, "Hide QRT spots");
+
+                    ui.add_space(6.0);
+                    ui.label("Max Spot Age:");
+                    ui.horizontal_wrapped(|ui| {
+                        for (label, mins) in &[
+                            ("5m", 5i64),
+                            ("15m", 15),
+                            ("30m", 30),
+                            ("1h", 60),
+                            ("2h", 120),
+                            ("All", 0),
+                        ] {
+                            let is_selected = self.max_age_mins == *mins;
+                            if ui.selectable_label(is_selected, *label).clicked() {
+                                self.max_age_mins = *mins;
+                            }
                         }
                     });
 
-                ui.add_space(6.0);
-                ui.checkbox(&mut self.hide_hunted, "Hide hunted spots");
-                ui.checkbox(&mut self.hide_qrt, "Hide QRT spots");
-
-                ui.add_space(6.0);
-                ui.label("Max Spot Age:");
-                ui.horizontal_wrapped(|ui| {
-                    for (label, mins) in &[
-                        ("5m", 5i64),
-                        ("15m", 15),
-                        ("30m", 30),
-                        ("1h", 60),
-                        ("2h", 120),
-                        ("All", 0),
-                    ] {
-                        let is_selected = self.max_age_mins == *mins;
-                        if ui.selectable_label(is_selected, *label).clicked() {
-                            self.max_age_mins = *mins;
-                        }
-                    }
-                });
-
-                ui.add_space(8.0);
-                if ui.button("Clear All Filters").clicked() {
-                    self.filter_bands.clear();
-                    self.filter_modes.clear();
-                    self.filter_types.clear();
-                    self.filter_country = "All".to_string();
-                    self.filter_callsign.clear();
-                    self.hide_hunted = false;
-                    self.hide_qrt = false;
-                    self.max_age_mins = 15;
-                }
-
-                ui.separator();
-                ui.label(egui::RichText::new("Quick Band Filters").strong().size(13.0));
-                ui.horizontal_wrapped(|ui| {
-                    // "All" button clears the set
-                    if ui
-                        .selectable_label(self.filter_bands.is_empty(), "All")
-                        .clicked()
-                    {
+                    ui.add_space(8.0);
+                    if ui.button("Clear All Filters").clicked() {
                         self.filter_bands.clear();
-                    }
-                    for band in &[
-                        "160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m",
-                        "12m", "10m", "6m", "2m",
-                    ] {
-                        let is_selected = self.filter_bands.contains(*band);
-                        let resp = ui.selectable_label(is_selected, *band);
-                        if resp.secondary_clicked() {
-                            // Right-click: select only this band, clearing all others
-                            self.filter_bands.clear();
-                            self.filter_bands.insert(band.to_string());
-                        } else if resp.clicked() {
-                            // Left-click: toggle this band on/off
-                            if is_selected {
-                                self.filter_bands.remove(*band);
-                            } else {
-                                self.filter_bands.insert(band.to_string());
-                            }
-                        }
-                    }
-                });
-
-                ui.separator();
-                ui.label(egui::RichText::new("Quick Mode Filters").strong().size(13.0));
-                ui.horizontal_wrapped(|ui| {
-                    // "All" button clears the set
-                    if ui
-                        .selectable_label(self.filter_modes.is_empty(), "All")
-                        .clicked()
-                    {
                         self.filter_modes.clear();
-                    }
-                    let modes = self.available_modes.clone();
-                    for mode in &modes {
-                        let is_selected = self.filter_modes.contains(mode.as_str());
-                        let resp = ui.selectable_label(is_selected, mode);
-                        if resp.secondary_clicked() {
-                            // Right-click: select only this mode, clearing all others
-                            self.filter_modes.clear();
-                            self.filter_modes.insert(mode.to_string());
-                        } else if resp.clicked() {
-                            // Left-click: toggle this mode on/off
-                            if is_selected {
-                                self.filter_modes.remove(mode.as_str());
-                            } else {
-                                self.filter_modes.insert(mode.to_string());
-                            }
-                        }
-                    }
-                });
-
-                ui.separator();
-                ui.label(egui::RichText::new("Quick Type Filters").strong().size(13.0));
-                ui.horizontal_wrapped(|ui| {
-                    if ui
-                        .selectable_label(self.filter_types.is_empty(), "All")
-                        .clicked()
-                    {
                         self.filter_types.clear();
+                        self.filter_country = "All".to_string();
+                        self.filter_callsign.clear();
+                        self.hide_hunted = false;
+                        self.hide_qrt = false;
+                        self.max_age_mins = 15;
                     }
-                    for spot_type in &[SpotType::Pota, SpotType::Sota, SpotType::Dx, SpotType::Wwff] {
-                        let is_selected = self.filter_types.contains(spot_type);
-                        let resp = ui.selectable_label(is_selected, spot_type.label());
-                        if resp.secondary_clicked() {
-                            // Right-click: select only this type, clearing all others
-                            self.filter_types.clear();
-                            self.filter_types.insert(*spot_type);
-                        } else if resp.clicked() {
-                            // Left-click: toggle this type on/off
-                            if is_selected {
-                                self.filter_types.remove(spot_type);
-                            } else {
-                                self.filter_types.insert(*spot_type);
+
+                    ui.separator();
+                    ui.label(
+                        egui::RichText::new("Quick Band Filters")
+                            .strong()
+                            .size(13.0),
+                    );
+                    ui.horizontal_wrapped(|ui| {
+                        // "All" button clears the set
+                        if ui
+                            .selectable_label(self.filter_bands.is_empty(), "All")
+                            .clicked()
+                        {
+                            self.filter_bands.clear();
+                        }
+                        for band in &[
+                            "160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m", "12m", "10m",
+                            "6m", "2m",
+                        ] {
+                            let is_selected = self.filter_bands.contains(*band);
+                            let resp = ui.selectable_label(is_selected, *band);
+                            if resp.secondary_clicked() {
+                                // Right-click: select only this band, clearing all others
+                                self.filter_bands.clear();
+                                self.filter_bands.insert(band.to_string());
+                            } else if resp.clicked() {
+                                // Left-click: toggle this band on/off
+                                if is_selected {
+                                    self.filter_bands.remove(*band);
+                                } else {
+                                    self.filter_bands.insert(band.to_string());
+                                }
                             }
+                        }
+                    });
+
+                    ui.separator();
+                    ui.label(
+                        egui::RichText::new("Quick Mode Filters")
+                            .strong()
+                            .size(13.0),
+                    );
+                    ui.horizontal_wrapped(|ui| {
+                        // "All" button clears the set
+                        if ui
+                            .selectable_label(self.filter_modes.is_empty(), "All")
+                            .clicked()
+                        {
+                            self.filter_modes.clear();
+                        }
+                        let modes = self.available_modes.clone();
+                        for mode in &modes {
+                            let is_selected = self.filter_modes.contains(mode.as_str());
+                            let resp = ui.selectable_label(is_selected, mode);
+                            if resp.secondary_clicked() {
+                                // Right-click: select only this mode, clearing all others
+                                self.filter_modes.clear();
+                                self.filter_modes.insert(mode.to_string());
+                            } else if resp.clicked() {
+                                // Left-click: toggle this mode on/off
+                                if is_selected {
+                                    self.filter_modes.remove(mode.as_str());
+                                } else {
+                                    self.filter_modes.insert(mode.to_string());
+                                }
+                            }
+                        }
+                    });
+
+                    ui.separator();
+                    ui.label(
+                        egui::RichText::new("Quick Type Filters")
+                            .strong()
+                            .size(13.0),
+                    );
+                    ui.horizontal_wrapped(|ui| {
+                        if ui
+                            .selectable_label(self.filter_types.is_empty(), "All")
+                            .clicked()
+                        {
+                            self.filter_types.clear();
+                        }
+                        for spot_type in
+                            &[SpotType::Pota, SpotType::Sota, SpotType::Dx, SpotType::Wwff]
+                        {
+                            let is_selected = self.filter_types.contains(spot_type);
+                            let resp = ui.selectable_label(is_selected, spot_type.label());
+                            if resp.secondary_clicked() {
+                                // Right-click: select only this type, clearing all others
+                                self.filter_types.clear();
+                                self.filter_types.insert(*spot_type);
+                            } else if resp.clicked() {
+                                // Left-click: toggle this type on/off
+                                if is_selected {
+                                    self.filter_types.remove(spot_type);
+                                } else {
+                                    self.filter_types.insert(*spot_type);
+                                }
+                            }
+                        }
+                    });
+
+                    ui.separator();
+                    if ui.button("🗑 Clear Hunted List").clicked() {
+                        self.hunted_set.clear();
+                        self.not_heard_set.clear();
+                        let mut state = self.state.lock().unwrap();
+                        for entry in &mut state.spots {
+                            entry.hunted = false;
+                            entry.not_heard = false;
                         }
                     }
                 });
-
-                ui.separator();
-                if ui.button("🗑 Clear Hunted List").clicked() {
-                    self.hunted_set.clear();
-                    self.not_heard_set.clear();
-                    let mut state = self.state.lock().unwrap();
-                    for entry in &mut state.spots {
-                        entry.hunted = false;
-                        entry.not_heard = false;
-                    }
-                }
-            });
-        }  // end of if self.show_filters
+        } // end of if self.show_filters
 
         // Central panel - spot table
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -2907,27 +3130,17 @@ impl eframe::App for PotaHunterApp {
             // Build filtered keys list for keyboard navigation
             self.filtered_keys = filtered.iter().map(|(_, e)| e.spot_key()).collect();
 
+            if key_shift_t && !typing {
+                self.tune_next_visible_spot(self.selected_row_idx, &filtered, "Next -> ");
+            }
+
             // Process keyboard shortcuts on the selected spot (by exact row index so
             // duplicate-key rows like multiple DX spots per callsign work correctly).
             if let Some(row_idx) = self.selected_row_idx {
                 if let Some((original_idx, entry)) = filtered.get(row_idx).cloned() {
 
                     if key_enter {
-                        let port: u16 = self.n3fjp_port.parse().unwrap_or(1100);
-                        let client = N3fjpClient::new(&self.n3fjp_host, port);
-                        let sk = entry.spot_key();
-                        match client.tune_to_spot(&entry.spot) {
-                            Ok(_) => {
-                                self.n3fjp_status = format!(
-                                    "Tuned to {} on {} kHz",
-                                    entry.spot.activator, entry.spot.frequency
-                                );
-                                self.last_tuned_key = Some(sk);
-                            }
-                            Err(e) => {
-                                self.n3fjp_status = format!("Tune failed: {}", e);
-                            }
-                        }
+                        self.tune_spot(&entry.spot, entry.spot_key(), "");
                     }
 
                     if key_h {
@@ -2949,16 +3162,7 @@ impl eframe::App for PotaHunterApp {
                         let client = N3fjpClient::new(&self.n3fjp_host, port);
                         match client.log_qso(&entry.spot) {
                             Ok(_) => {
-                                self.n3fjp_status = format!(
-                                    "Logged {} to AC Log",
-                                    entry.spot.activator
-                                );
-                                let key = entry.spot_key();
-                                self.hunted_set.insert(key);
-                                let mut state = self.state.lock().unwrap();
-                                if let Some(e) = state.spots.get_mut(original_idx) {
-                                    e.hunted = true;
-                                }
+                                self.mark_logged_success(original_idx, &entry, row_idx, &filtered);
                             }
                             Err(e) => {
                                 self.n3fjp_status = format!("Log failed: {}", e);
@@ -3096,7 +3300,7 @@ impl eframe::App for PotaHunterApp {
             }
 
             ui.label(format!(
-                "Showing {} spots  (Up/Down navigate, Enter = tune, H = hunt, N = NH+skip, L = log, R = refresh, / = search)",
+                "Showing {} spots  (Up/Down navigate, Enter = tune, Shift+T = next+tune, H = hunt, N = NH+skip, L = log, R = refresh, / = search)",
                 filtered.len()
             ));
             ui.separator();
@@ -3610,19 +3814,12 @@ impl eframe::App for PotaHunterApp {
                                             N3fjpClient::new(&self.n3fjp_host, port);
                                         match client.log_qso(&entry.spot) {
                                             Ok(_) => {
-                                                self.n3fjp_status = format!(
-                                                    "Logged {} to AC Log",
-                                                    entry.spot.activator
+                                                self.mark_logged_success(
+                                                    *original_idx,
+                                                    &entry,
+                                                    row_idx,
+                                                    &filtered,
                                                 );
-                                                let key = spot_key.clone();
-                                                self.hunted_set.insert(key);
-                                                let mut state =
-                                                    self.state.lock().unwrap();
-                                                if let Some(entry) =
-                                                    state.spots.get_mut(*original_idx)
-                                                {
-                                                    entry.hunted = true;
-                                                }
                                             }
                                             Err(e) => {
                                                 self.n3fjp_status =
@@ -3775,18 +3972,15 @@ impl eframe::App for PotaHunterApp {
                     egui::Frame::popup(ui.style()).show(ui, |ui| {
                         ui.set_min_width(180.0);
 
-                        if let Some(ref spot) = self.ctx_menu_spot {
+                        if let Some(spot) = self.ctx_menu_spot.clone() {
                             // Header
-                            ui.label(
-                                egui::RichText::new(&spot.activator)
-                                    .strong(),
-                            );
+                            ui.label(egui::RichText::new(&spot.activator).strong());
                             ui.separator();
 
                             if ui.button("Tune radio").clicked() {
                                 let port: u16 = self.n3fjp_port.parse().unwrap_or(1100);
                                 let client = N3fjpClient::new(&self.n3fjp_host, port);
-                                match client.tune_to_spot(spot) {
+                                match client.tune_to_spot(&spot) {
                                     Ok(_) => {
                                         self.n3fjp_status = format!(
                                             "Tuned to {} on {} kHz",
@@ -3804,12 +3998,9 @@ impl eframe::App for PotaHunterApp {
                             if ui.button("Log QSO to AC Log").clicked() {
                                 let port: u16 = self.n3fjp_port.parse().unwrap_or(1100);
                                 let client = N3fjpClient::new(&self.n3fjp_host, port);
-                                match client.log_qso(spot) {
+                                match client.log_qso(&spot) {
                                     Ok(_) => {
-                                        self.n3fjp_status = format!(
-                                            "Logged {}",
-                                            spot.activator
-                                        );
+                                        self.n3fjp_status = format!("Logged {}", spot.activator);
                                         if let Some(ref key) = self.ctx_menu_spot_key {
                                             self.hunted_set.insert(key.clone());
                                         }
@@ -3818,6 +4009,14 @@ impl eframe::App for PotaHunterApp {
                                             if let Some(e) = state.spots.get_mut(oi) {
                                                 e.hunted = true;
                                             }
+                                        }
+                                        if self.auto_tune_next_on_log {
+                                            let filtered = self.get_filtered_spots();
+                                            self.tune_next_visible_spot(
+                                                self.ctx_menu_row,
+                                                &filtered,
+                                                "Logged -> ",
+                                            );
                                         }
                                     }
                                     Err(e) => {
@@ -3882,7 +4081,8 @@ impl eframe::App for PotaHunterApp {
                             if let Some(SpotType::Pota) = self.ctx_menu_spot_type {
                                 if !spot.reference.is_empty() {
                                     if ui.button("Open on POTA.app").clicked() {
-                                        let url = format!("https://pota.app/#/park/{}", spot.reference);
+                                        let url =
+                                            format!("https://pota.app/#/park/{}", spot.reference);
                                         let _ = open::that(&url);
                                         close_menu = true;
                                     }
@@ -3971,7 +4171,7 @@ fn main() -> eframe::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([1400.0, 800.0])
         .with_min_inner_size([900.0, 500.0])
-        .with_title("KM5E's Base Camp v1.21.0 — POTA, SOTA & DX Spot Browser");
+        .with_title("KM5E's Base Camp v1.21.3 — POTA, SOTA & DX Spot Browser");
 
     if let Some(icon) = load_icon() {
         viewport = viewport.with_icon(std::sync::Arc::new(icon));

@@ -1,6 +1,6 @@
 [package]
 name = "basecamp"
-version = "1.21.0"
+version = "1.21.3"
 edition = "2021"
 description = "KM5E's Base Camp — POTA, SOTA & DX Spot Browser with N3FJP AC Log integration"
 authors = ["Craig KM5E"]
