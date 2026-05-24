@@ -1,4 +1,4 @@
-// KM5E's Base Camp v1.21.3
+// KM5E's Base Camp v1.25.1
 // POTA, SOTA & DX Spot Browser with N3FJP AC Log integration
 // Displays POTA, SOTA and DX cluster spots with radio tuning via N3FJP API
 
@@ -252,6 +252,8 @@ struct Settings {
     hide_qrt: bool,
     max_age_mins: i64,
     auto_tune_next_on_log: bool,
+    #[serde(default)]
+    filter_atno_only: bool,
 }
 
 impl Default for Settings {
@@ -270,8 +272,13 @@ impl Default for Settings {
             hide_qrt: false,
             max_age_mins: 15,
             auto_tune_next_on_log: false,
+            filter_atno_only: false,
         }
     }
+}
+
+fn is_new_atno_status(status: Option<&str>) -> bool {
+    matches!(status, Some("ATNO" | "OW" | "OC"))
 }
 
 fn settings_path() -> PathBuf {
@@ -1234,6 +1241,7 @@ struct PotaHunterApp {
     hide_hunted: bool,
     hide_dupes: bool,
     hide_qrt: bool,
+    filter_atno_only: bool,
     max_age_mins: i64, // 0 = no limit
 
     // Available filter options (populated from spots)
@@ -1259,7 +1267,7 @@ struct PotaHunterApp {
 
     // DXCC / ATNO lookup caches
     dxcc_cache: HashMap<String, (String, String)>, // callsign -> (country, dxcc_num)
-    atno_cache: HashMap<String, String>,           // "country|band|mode" -> ATNO status
+    atno_cache: HashMap<String, String>,           // "callsign|band|mode" -> ATNO status
     dxcc_lookup_running: Arc<AtomicBool>,
     dxcc_pending: Arc<Mutex<Vec<(String, String, String)>>>, // (call, band, mode)
     dxcc_results: Arc<Mutex<Vec<(String, String, String, String)>>>, // (cache_key, call, country, status)
@@ -1346,6 +1354,7 @@ impl Default for PotaHunterApp {
             hide_hunted: false,
             hide_dupes: s.hide_dupes,
             hide_qrt: s.hide_qrt,
+            filter_atno_only: s.filter_atno_only,
             max_age_mins: s.max_age_mins,
             available_bands: Vec::new(),
             available_modes: Vec::new(),
@@ -1563,8 +1572,21 @@ impl PotaHunterApp {
             hide_qrt: self.hide_qrt,
             max_age_mins: self.max_age_mins,
             auto_tune_next_on_log: self.auto_tune_next_on_log,
+            filter_atno_only: self.filter_atno_only,
         };
         save_settings(&s);
+    }
+
+    fn clear_all_filters(&mut self, max_age_mins: i64) {
+        self.filter_bands.clear();
+        self.filter_modes.clear();
+        self.filter_types.clear();
+        self.filter_country = "All".to_string();
+        self.filter_callsign.clear();
+        self.hide_hunted = false;
+        self.hide_qrt = false;
+        self.filter_atno_only = false;
+        self.max_age_mins = max_age_mins;
     }
 
     fn tune_spot(&mut self, spot: &PotaSpot, spot_key: String, status_prefix: &str) -> bool {
@@ -1942,6 +1964,10 @@ impl PotaHunterApp {
                 if self.hide_qrt && entry.is_qrt {
                     return false;
                 }
+                // ATNO/New filter
+                if self.filter_atno_only && !is_new_atno_status(entry.atno_status.as_deref()) {
+                    return false;
+                }
                 // Max age filter (0 = no limit)
                 if self.max_age_mins > 0 {
                     let age = spot_age_minutes(entry.spot.spot_time.as_deref().unwrap_or(""));
@@ -2284,7 +2310,7 @@ impl PotaHunterApp {
                 if let Some((country, _)) = self.dxcc_cache.get(&entry.spot.activator) {
                     entry.dxcc_country = Some(country.clone());
                 }
-                if status == "ATNO" || status == "OC" || status == "OW" {
+                if is_new_atno_status(Some(status.as_str())) {
                     alert_count += 1;
                 }
             }
@@ -2978,6 +3004,8 @@ impl eframe::App for PotaHunterApp {
                     ui.add_space(6.0);
                     ui.checkbox(&mut self.hide_hunted, "Hide hunted spots");
                     ui.checkbox(&mut self.hide_qrt, "Hide QRT spots");
+                    ui.checkbox(&mut self.filter_atno_only, "Show ATNO/New only")
+                        .on_hover_text("Shows spots with ATNO, OW, or OC status from N3FJP");
 
                     ui.add_space(6.0);
                     ui.label("Max Spot Age:");
@@ -2999,14 +3027,7 @@ impl eframe::App for PotaHunterApp {
 
                     ui.add_space(8.0);
                     if ui.button("Clear All Filters").clicked() {
-                        self.filter_bands.clear();
-                        self.filter_modes.clear();
-                        self.filter_types.clear();
-                        self.filter_country = "All".to_string();
-                        self.filter_callsign.clear();
-                        self.hide_hunted = false;
-                        self.hide_qrt = false;
-                        self.max_age_mins = 15;
+                        self.clear_all_filters(15);
                     }
 
                     ui.separator();
@@ -3286,14 +3307,7 @@ impl eframe::App for PotaHunterApp {
                     );
                     ui.add_space(8.0);
                     if ui.button("Clear all filters").clicked() {
-                        self.filter_bands.clear();
-                        self.filter_modes.clear();
-                        self.filter_types.clear();
-                        self.filter_country = "All".to_string();
-                        self.filter_callsign.clear();
-                        self.hide_hunted = false;
-                        self.hide_qrt = false;
-                        self.max_age_mins = 0;
+                        self.clear_all_filters(0);
                     }
                 });
                 return;
@@ -3413,8 +3427,7 @@ impl eframe::App for PotaHunterApp {
                                 let is_greyed = entry.is_qrt;  // only QRT is greyed
                                 let is_not_heard = entry.not_heard && !entry.is_qrt;
                                 let is_selected = self.selected_row_idx == Some(row_idx);
-                                let is_atno = entry.atno_status.as_deref()
-                                    .map_or(false, |s| s == "ATNO" || s == "OW" || s == "OC");
+                                let is_atno = is_new_atno_status(entry.atno_status.as_deref());
 
                                 // Text color — only not-heard gets a custom colour now;
                                 // QRT spots are no longer faded (only the callsign is struck through).
@@ -4163,15 +4176,109 @@ fn load_icon() -> Option<egui::IconData> {
     })
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_spot(call: &str) -> PotaSpot {
+        PotaSpot {
+            spot_id: None,
+            activator: call.to_string(),
+            frequency: "14074.0".to_string(),
+            mode: "FT8".to_string(),
+            reference: "K-0001".to_string(),
+            park_name: Some("Test Park".to_string()),
+            spot_time: None,
+            spotter: None,
+            comments: None,
+            source: None,
+            name: None,
+            location_desc: Some("US".to_string()),
+            grid4: None,
+            grid6: None,
+        }
+    }
+
+    fn test_entry(call: &str, atno_status: Option<&str>) -> SpotEntry {
+        SpotEntry {
+            spot: test_spot(call),
+            spot_type: SpotType::Pota,
+            band: "20m".to_string(),
+            country: "United States".to_string(),
+            hunted: false,
+            is_qrt: false,
+            not_heard: false,
+            dxcc_country: None,
+            atno_status: atno_status.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn new_atno_statuses_match_new_spot_definition() {
+        for status in ["ATNO", "OW", "OC"] {
+            assert!(is_new_atno_status(Some(status)));
+        }
+
+        for status in ["OWBMW", "OCBMW", "BMC", "ERR", ""] {
+            assert!(!is_new_atno_status(Some(status)));
+        }
+        assert!(!is_new_atno_status(None));
+    }
+
+    #[test]
+    fn atno_only_filter_keeps_only_new_statuses() {
+        let mut app = PotaHunterApp::default();
+        app.filter_atno_only = true;
+        app.max_age_mins = 0;
+
+        {
+            let mut state = app.state.lock().unwrap();
+            state.spots = vec![
+                test_entry("K1AAA", Some("ATNO")),
+                test_entry("K1BBB", Some("OW")),
+                test_entry("K1CCC", Some("OC")),
+                test_entry("K1DDD", Some("BMC")),
+                test_entry("K1EEE", Some("ERR")),
+                test_entry("K1FFF", None),
+            ];
+        }
+
+        let calls: Vec<String> = app
+            .get_filtered_spots()
+            .into_iter()
+            .map(|(_, entry)| entry.spot.activator)
+            .collect();
+
+        assert_eq!(calls, vec!["K1AAA", "K1BBB", "K1CCC"]);
+    }
+
+    #[test]
+    fn clear_all_filters_resets_atno_only_filter() {
+        let mut app = PotaHunterApp::default();
+        app.filter_atno_only = true;
+        app.hide_hunted = true;
+        app.hide_qrt = true;
+        app.filter_callsign = "K1AAA".to_string();
+
+        app.clear_all_filters(15);
+
+        assert!(!app.filter_atno_only);
+        assert!(!app.hide_hunted);
+        assert!(!app.hide_qrt);
+        assert!(app.filter_callsign.is_empty());
+        assert_eq!(app.max_age_mins, 15);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
 fn main() -> eframe::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
-        .with_inner_size([1400.0, 800.0])
+        .with_inner_size([1600.0, 800.0])
         .with_min_inner_size([900.0, 500.0])
-        .with_title("KM5E's Base Camp v1.21.3 — POTA, SOTA & DX Spot Browser");
+        .with_title("KM5E's Base Camp v1.25.1 — POTA, SOTA & DX Spot Browser");
 
     if let Some(icon) = load_icon() {
         viewport = viewport.with_icon(std::sync::Arc::new(icon));

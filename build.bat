@@ -1,23 +1,23 @@
 @echo off
-REM KM5E's Base Camp v1.21.3 - Build Script for Windows
+REM KM5E's Base Camp v1.25.1 - Build Script for Windows
 REM Requires Rust toolchain: https://rustup.rs/
 
 echo ========================================
-echo   Building KM5E's Base Camp v1.21.3
+echo   Building KM5E's Base Camp v1.25.1
 echo ========================================
 
 cargo build --release
 
 if %ERRORLEVEL% EQU 0 (
     echo.
-    copy /Y "target\release\basecamp.exe" "target\release\basecamp-v1.21.3.exe" >nul
-    copy /Y "target\release\basecamp.exe" "basecamp-v1.21.3.exe" >nul
+    copy /Y "target\release\basecamp.exe" "target\release\basecamp-v1.25.1.exe" >nul
+    copy /Y "target\release\basecamp.exe" "basecamp-v1.25.1.exe" >nul
     echo Build successful!
     echo Binaries:
-    echo   target\release\basecamp-v1.21.3.exe
-    echo   basecamp-v1.21.3.exe  (same directory as build.bat)
+    echo   target\release\basecamp-v1.25.1.exe
+    echo   basecamp-v1.25.1.exe  ^(same directory as build.bat^)
     echo.
-    echo Run with:  basecamp-v1.21.3.exe
+    echo Run with:  basecamp-v1.25.1.exe
 ) else (
     echo.
     echo Build FAILED. Check errors above.

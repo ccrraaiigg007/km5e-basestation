@@ -1,6 +1,6 @@
 # Base Camp Construction Notes
 
-Generated from the v1.21.3 source in `src/main.rs`.
+Generated from the v1.25.1 source in `src/main.rs`.
 
 ## Project Shape
 
@@ -12,7 +12,7 @@ Generated from the v1.21.3 source in `src/main.rs`.
 
 ## Important Version Drift
 
-- `Cargo.toml`, `build.bat`, source header, and `main()` title say v1.21.3.
+- `Cargo.toml`, `build.bat`, source header, and `main()` title say v1.25.1.
 - `DESIGN.md` says v1.11.3.
 - `README.md` says v1.7.0.
 - HTTP user-agent strings still say `BaseCamp/1.13`.
